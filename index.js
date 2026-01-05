@@ -293,6 +293,7 @@ function buildLegacyAspectRoleName(aspectName) {
 
 async function ensureAspectRoles(guild, categories) {
   const created = [];
+  const failed = [];
   if (!guild?.members) return { created };
   const me = guild.members.me || (await guild.members.fetchMe().catch(() => null));
   if (!me) return { created };
@@ -309,18 +310,30 @@ async function ensureAspectRoles(guild, categories) {
     for (const it of c.items) {
       const roleName = buildAspectRoleName(it.name);
       if (existingByName.has(roleName) || existingByName.has(buildLegacyAspectRoleName(it.name))) continue;
-      const role = await guild.roles.create({
-        name: roleName,
-        mentionable: false,
-        hoist: false,
-        reason: 'Dark City bot: creating missing Aspect role',
-      });
-      existingByName.set(roleName, role);
-      created.push(role.id);
+
+      try {
+        const role = await guild.roles.create({
+          name: roleName,
+          mentionable: false,
+          hoist: false,
+          reason: 'Dark City bot: creating missing Aspect role',
+        });
+        existingByName.set(roleName, role);
+        created.push(role.id);
+      } catch (e) {
+        failed.push(roleName);
+        console.error('Failed to create aspect role:', roleName, e);
+        logEvent('error', 'aspect_role_create_failed', 'Failed to create aspect role', {
+          roleName,
+          discordCode: e?.code,
+          status: e?.status,
+          message: e?.message || String(e),
+        });
+      }
     }
   }
 
-  return { created };
+  return { created, failed };
 }
 
 async function getAspectRoleMaps(guild, categories) {
@@ -518,18 +531,26 @@ async function main() {
         try {
           await assertCanPostInAspectsChannel(interaction.guild);
           const categories = readAspectsFromMarkdown();
-          const { created } = await ensureAspectRoles(interaction.guild, categories);
+          const { created, failed } = await ensureAspectRoles(interaction.guild, categories);
           await postAspectsMenus(interaction.guild, categories);
 
           logEvent('info', 'aspects_posted', 'Posted Aspects menus', {
             userId: interaction.user?.id,
             channelId: ASPECTS_CHANNEL_ID,
             createdRoles: created.length,
+            failedRoles: failed?.length || 0,
           });
 
-          await interaction.editReply(
-            `Posted Aspects menus in <#${ASPECTS_CHANNEL_ID}>. Created ${created.length} missing roles.`
-          );
+          if (failed && failed.length > 0) {
+            const sample = failed.slice(0, 10).join(', ');
+            await interaction.editReply(
+              `Posted Aspects menus in <#${ASPECTS_CHANNEL_ID}>. Created ${created.length} missing roles. Failed to create ${failed.length} roles (sample: ${sample}). Check logs for the Discord error code (common: role limit).`
+            );
+          } else {
+            await interaction.editReply(
+              `Posted Aspects menus in <#${ASPECTS_CHANNEL_ID}>. Created ${created.length} missing roles.`
+            );
+          }
           return;
         } catch (e) {
           console.error('aspects_post error:', e);
