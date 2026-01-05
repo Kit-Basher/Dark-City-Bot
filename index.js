@@ -183,6 +183,10 @@ const aspectsPostCommand = new SlashCommandBuilder()
   .setName('aspects_post')
   .setDescription('Post/update the Aspects role menus in the #aspects channel (mods only)');
 
+const aspectsCleanupPrefixedCommand = new SlashCommandBuilder()
+  .setName('aspects_cleanup_prefixed')
+  .setDescription('Delete unused legacy Aspect: roles (memberCount=0). Use before reposting without prefix (mods only)');
+
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(DISCORD_BOT_TOKEN);
   await rest.put(Routes.applicationGuildCommands(DISCORD_APPLICATION_ID, DISCORD_GUILD_ID), {
@@ -195,8 +199,50 @@ async function registerCommands() {
       lockCommand.toJSON(),
       unlockCommand.toJSON(),
       aspectsPostCommand.toJSON(),
+      aspectsCleanupPrefixedCommand.toJSON(),
     ],
   });
+}
+
+async function cleanupPrefixedAspectRoles(guild) {
+  if (!guild?.members) throw new Error('Guild not available');
+  const me = guild.members.me || (await guild.members.fetchMe().catch(() => null));
+  if (!me) throw new Error('Could not resolve bot member');
+
+  if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+    throw new Error('Missing Manage Roles permission');
+  }
+
+  const roles = guild.roles.cache
+    .filter((r) => r?.name?.startsWith('Aspect: '))
+    .map((r) => r);
+
+  let deleted = 0;
+  let skippedInUse = 0;
+  let failed = 0;
+
+  for (const role of roles) {
+    if (!role) continue;
+    if (role.managed) {
+      failed += 1;
+      continue;
+    }
+
+    // memberCount is maintained by Discord for roles in guild.
+    if ((role.members?.size || 0) > 0) {
+      skippedInUse += 1;
+      continue;
+    }
+
+    try {
+      await role.delete('Dark City bot: removing legacy Aspect: role prefix');
+      deleted += 1;
+    } catch (e) {
+      failed += 1;
+    }
+  }
+
+  return { deleted, skippedInUse, failed, total: roles.length };
 }
 
 function readAspectsFromMarkdown() {
@@ -479,6 +525,34 @@ async function main() {
           logEvent('error', 'aspects_post_error', e?.message || String(e), { stack: e?.stack });
           await interaction.editReply(
             `Failed to post in <#${ASPECTS_CHANNEL_ID}>. Most likely the bot is missing channel permissions (View Channel + Send Messages) or role permissions (Manage Roles). Error: ${e?.message || String(e)}`
+          );
+          return;
+        }
+      }
+
+      if (interaction.commandName === 'aspects_cleanup_prefixed') {
+        if (!(await requireModerator(interaction))) return;
+        if (!interaction.guild) {
+          await interaction.reply({ content: 'Must be used in a server.', ephemeral: true });
+          return;
+        }
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+          const result = await cleanupPrefixedAspectRoles(interaction.guild);
+          logEvent('info', 'aspects_cleanup_prefixed', 'Cleaned up prefixed aspect roles', {
+            userId: interaction.user?.id,
+            ...result,
+          });
+          await interaction.editReply(
+            `Cleanup complete. Deleted ${result.deleted}/${result.total} roles. Skipped in-use: ${result.skippedInUse}. Failed: ${result.failed}.`
+          );
+          return;
+        } catch (e) {
+          console.error('aspects_cleanup_prefixed error:', e);
+          logEvent('error', 'aspects_cleanup_prefixed_error', e?.message || String(e), { stack: e?.stack });
+          await interaction.editReply(
+            `Cleanup failed. Ensure the bot has Manage Roles and that its role is above the Aspect roles. Error: ${e?.message || String(e)}`
           );
           return;
         }
