@@ -290,6 +290,13 @@ app.get('/settings', requireLogin, async (req, res) => {
     const settings = await getSettings();
     const rUser = settings?.rCooldownUserMs ?? '';
     const rChan = settings?.rCooldownChannelMs ?? '';
+    const inviteAutoDeleteEnabled = typeof settings?.inviteAutoDeleteEnabled === 'boolean' ? settings.inviteAutoDeleteEnabled : true;
+    const inviteWarnEnabled = typeof settings?.inviteWarnEnabled === 'boolean' ? settings.inviteWarnEnabled : true;
+    const inviteWarnDeleteSeconds = Number.isFinite(settings?.inviteWarnDeleteSeconds) ? settings.inviteWarnDeleteSeconds : 12;
+
+    const lowTrustLinkFilterEnabled = typeof settings?.lowTrustLinkFilterEnabled === 'boolean' ? settings.lowTrustLinkFilterEnabled : true;
+    const lowTrustMinAccountAgeDays = Number.isFinite(settings?.lowTrustMinAccountAgeDays) ? settings.lowTrustMinAccountAgeDays : 7;
+    const lowTrustWarnDmEnabled = typeof settings?.lowTrustWarnDmEnabled === 'boolean' ? settings.lowTrustWarnDmEnabled : true;
     const mongoOk = Boolean(botDb);
 
     res.send(
@@ -309,6 +316,39 @@ app.get('/settings', requireLogin, async (req, res) => {
               <label class="muted" for="rCooldownChannelMs">/r cooldown (per channel, ms)</label><br/>
               <input id="rCooldownChannelMs" name="rCooldownChannelMs" inputmode="numeric" value="${rChan}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
             </div>
+
+            <div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.12);">
+              <div class="muted" style="font-weight:700; margin-bottom:8px;">Auto-mod: Invite links</div>
+              <label style="display:flex; gap:8px; align-items:center;">
+                <input type="checkbox" name="inviteAutoDeleteEnabled" ${inviteAutoDeleteEnabled ? 'checked' : ''} />
+                <span>Delete Discord invite links</span>
+              </label>
+              <label style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+                <input type="checkbox" name="inviteWarnEnabled" ${inviteWarnEnabled ? 'checked' : ''} />
+                <span>Post channel warning (temporary)</span>
+              </label>
+              <div style="margin-top:8px;">
+                <label class="muted" for="inviteWarnDeleteSeconds">Warning auto-delete (seconds)</label><br/>
+                <input id="inviteWarnDeleteSeconds" name="inviteWarnDeleteSeconds" inputmode="numeric" value="${inviteWarnDeleteSeconds}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+              </div>
+            </div>
+
+            <div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.12);">
+              <div class="muted" style="font-weight:700; margin-bottom:8px;">Auto-mod: Low-trust link filter</div>
+              <label style="display:flex; gap:8px; align-items:center;">
+                <input type="checkbox" name="lowTrustLinkFilterEnabled" ${lowTrustLinkFilterEnabled ? 'checked' : ''} />
+                <span>Delete links from new accounts</span>
+              </label>
+              <div style="margin-top:8px;">
+                <label class="muted" for="lowTrustMinAccountAgeDays">Minimum account age to post links (days)</label><br/>
+                <input id="lowTrustMinAccountAgeDays" name="lowTrustMinAccountAgeDays" inputmode="numeric" value="${lowTrustMinAccountAgeDays}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+              </div>
+              <label style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+                <input type="checkbox" name="lowTrustWarnDmEnabled" ${lowTrustWarnDmEnabled ? 'checked' : ''} />
+                <span>DM user when a link is removed</span>
+              </label>
+            </div>
+
             <button class="btn" type="submit">Save</button>
           </form>
           <p class="muted" style="margin-top:12px;">Bot reloads settings periodically, so changes can take up to ~30 seconds.</p>
@@ -329,6 +369,13 @@ app.post('/settings', requireLogin, async (req, res) => {
 
     const rCooldownUserMs = parseInt(req.body?.rCooldownUserMs, 10);
     const rCooldownChannelMs = parseInt(req.body?.rCooldownChannelMs, 10);
+    const inviteWarnDeleteSeconds = parseInt(req.body?.inviteWarnDeleteSeconds, 10);
+    const lowTrustMinAccountAgeDays = parseInt(req.body?.lowTrustMinAccountAgeDays, 10);
+
+    const inviteAutoDeleteEnabled = req.body?.inviteAutoDeleteEnabled === 'on';
+    const inviteWarnEnabled = req.body?.inviteWarnEnabled === 'on';
+    const lowTrustLinkFilterEnabled = req.body?.lowTrustLinkFilterEnabled === 'on';
+    const lowTrustWarnDmEnabled = req.body?.lowTrustWarnDmEnabled === 'on';
 
     const update = {};
     if (Number.isFinite(rCooldownUserMs) && rCooldownUserMs >= 0 && rCooldownUserMs <= 600000) {
@@ -337,6 +384,18 @@ app.post('/settings', requireLogin, async (req, res) => {
     if (Number.isFinite(rCooldownChannelMs) && rCooldownChannelMs >= 0 && rCooldownChannelMs <= 600000) {
       update.rCooldownChannelMs = rCooldownChannelMs;
     }
+
+    update.inviteAutoDeleteEnabled = inviteAutoDeleteEnabled;
+    update.inviteWarnEnabled = inviteWarnEnabled;
+    if (Number.isFinite(inviteWarnDeleteSeconds) && inviteWarnDeleteSeconds >= 0 && inviteWarnDeleteSeconds <= 120) {
+      update.inviteWarnDeleteSeconds = inviteWarnDeleteSeconds;
+    }
+
+    update.lowTrustLinkFilterEnabled = lowTrustLinkFilterEnabled;
+    if (Number.isFinite(lowTrustMinAccountAgeDays) && lowTrustMinAccountAgeDays >= 0 && lowTrustMinAccountAgeDays <= 365) {
+      update.lowTrustMinAccountAgeDays = lowTrustMinAccountAgeDays;
+    }
+    update.lowTrustWarnDmEnabled = lowTrustWarnDmEnabled;
 
     await upsertSettings(update);
     res.redirect('/settings');
