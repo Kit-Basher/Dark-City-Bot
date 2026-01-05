@@ -1,4 +1,5 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { MongoClient } = require('mongodb');
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -12,8 +13,68 @@ const DISCORD_BOT_TOKEN = requireEnv('DISCORD_BOT_TOKEN');
 const DISCORD_APPLICATION_ID = requireEnv('DISCORD_APPLICATION_ID');
 const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
 
-const R_COOLDOWN_USER_MS = parseInt(process.env.R_COOLDOWN_USER_MS || '3000', 10);
-const R_COOLDOWN_CHANNEL_MS = parseInt(process.env.R_COOLDOWN_CHANNEL_MS || '1000', 10);
+const DEFAULT_R_COOLDOWN_USER_MS = parseInt(process.env.R_COOLDOWN_USER_MS || '3000', 10);
+const DEFAULT_R_COOLDOWN_CHANNEL_MS = parseInt(process.env.R_COOLDOWN_CHANNEL_MS || '1000', 10);
+
+let rCooldownUserMs = DEFAULT_R_COOLDOWN_USER_MS;
+let rCooldownChannelMs = DEFAULT_R_COOLDOWN_CHANNEL_MS;
+
+const MONGODB_URI = process.env.MONGODB_URI;
+let mongoClient;
+let botDb;
+
+async function initMongo() {
+  if (!MONGODB_URI) {
+    console.log('ℹ️ Mongo: MONGODB_URI not set; bot settings/logs disabled');
+    return;
+  }
+
+  mongoClient = new MongoClient(MONGODB_URI);
+  await mongoClient.connect();
+  botDb = mongoClient.db(process.env.BOT_DB_NAME || 'dark_city_bot');
+  console.log('✅ Mongo: Connected');
+}
+
+async function loadSettings() {
+  if (!botDb) return;
+  const doc = await botDb.collection('bot_settings').findOne({ guildId: DISCORD_GUILD_ID });
+  if (!doc) return;
+
+  if (Number.isFinite(doc.rCooldownUserMs)) rCooldownUserMs = doc.rCooldownUserMs;
+  if (Number.isFinite(doc.rCooldownChannelMs)) rCooldownChannelMs = doc.rCooldownChannelMs;
+}
+
+async function ensureSettingsDoc() {
+  if (!botDb) return;
+  await botDb.collection('bot_settings').updateOne(
+    { guildId: DISCORD_GUILD_ID },
+    {
+      $setOnInsert: {
+        guildId: DISCORD_GUILD_ID,
+        rCooldownUserMs: DEFAULT_R_COOLDOWN_USER_MS,
+        rCooldownChannelMs: DEFAULT_R_COOLDOWN_CHANNEL_MS,
+        createdAt: new Date(),
+      },
+    },
+    { upsert: true }
+  );
+}
+
+async function logEvent(level, event, message, meta) {
+  try {
+    if (!botDb) return;
+    await botDb.collection('bot_logs').insertOne({
+      guildId: DISCORD_GUILD_ID,
+      level,
+      event,
+      message,
+      meta: meta || null,
+      createdAt: new Date(),
+    });
+  } catch (e) {
+    console.error('Mongo logEvent failed:', e);
+  }
+}
 
 const rollCommand = new SlashCommandBuilder()
   .setName('r')
@@ -50,6 +111,10 @@ function pruneOldEntries(map, olderThanMs, now) {
 }
 
 async function main() {
+  await initMongo();
+  await ensureSettingsDoc();
+  await loadSettings();
+
   await registerCommands();
 
   const client = new Client({
@@ -58,6 +123,11 @@ async function main() {
 
   client.once('ready', () => {
     console.log(`🤖 Logged in as ${client.user.tag}`);
+    logEvent('info', 'bot_ready', 'Bot logged in', {
+      userTag: client.user.tag,
+      rCooldownUserMs,
+      rCooldownChannelMs,
+    });
   });
 
   client.on('interactionCreate', async (interaction) => {
@@ -69,8 +139,8 @@ async function main() {
       const userId = interaction.user?.id;
       const channelId = interaction.channelId;
 
-      const userRemaining = getCooldownRemainingMs(lastRollByUser, userId, R_COOLDOWN_USER_MS, now);
-      const channelRemaining = getCooldownRemainingMs(lastRollByChannel, channelId, R_COOLDOWN_CHANNEL_MS, now);
+      const userRemaining = getCooldownRemainingMs(lastRollByUser, userId, rCooldownUserMs, now);
+      const channelRemaining = getCooldownRemainingMs(lastRollByChannel, channelId, rCooldownChannelMs, now);
       const remaining = Math.max(userRemaining, channelRemaining);
 
       if (remaining > 0) {
@@ -84,13 +154,24 @@ async function main() {
 
       if (userId) lastRollByUser.set(userId, now);
       if (channelId) lastRollByChannel.set(channelId, now);
-      pruneOldEntries(lastRollByUser, Math.max(R_COOLDOWN_USER_MS, 60000) * 10, now);
-      pruneOldEntries(lastRollByChannel, Math.max(R_COOLDOWN_CHANNEL_MS, 60000) * 10, now);
+      pruneOldEntries(lastRollByUser, Math.max(rCooldownUserMs, 60000) * 10, now);
+      pruneOldEntries(lastRollByChannel, Math.max(rCooldownChannelMs, 60000) * 10, now);
 
       const { d1, d2, total } = roll2d6();
       await interaction.reply(`🎲 2d6: ${d1} + ${d2} = **${total}**`);
+
+      logEvent('info', 'roll_2d6', 'Rolled 2d6', {
+        userId,
+        channelId,
+        d1,
+        d2,
+        total,
+      });
     } catch (error) {
       console.error('Interaction error:', error);
+      logEvent('error', 'interaction_error', error?.message || String(error), {
+        stack: error?.stack,
+      });
       if (interaction.isRepliable()) {
         const alreadyReplied = interaction.replied || interaction.deferred;
         const msg = 'Something went wrong handling that command.';
@@ -99,6 +180,10 @@ async function main() {
       }
     }
   });
+
+  setInterval(() => {
+    loadSettings().catch((e) => console.error('Failed to reload settings:', e));
+  }, 30000);
 
   await client.login(DISCORD_BOT_TOKEN);
 }

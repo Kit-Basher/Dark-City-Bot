@@ -1,11 +1,23 @@
 const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
+const { MongoClient } = require('mongodb');
 
 function requireEnv(name) {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
+}
+
+function nav(req) {
+  if (!req.session?.user?.allowed) return '';
+  return `<div style="display:flex; gap:12px; margin-bottom:14px; align-items:center;">
+    <a href="/dashboard">Dashboard</a>
+    <a href="/settings">Settings</a>
+    <a href="/logs">Logs</a>
+    <span style="flex:1"></span>
+    <a href="/logout">Log out</a>
+  </div>`;
 }
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -17,9 +29,14 @@ const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
 const DASHBOARD_ALLOWED_ROLE_ID = requireEnv('DASHBOARD_ALLOWED_ROLE_ID');
 const SESSION_SECRET = requireEnv('SESSION_SECRET');
 
+const MONGODB_URI = process.env.MONGODB_URI;
+const BOT_DB_NAME = process.env.BOT_DB_NAME || 'dark_city_bot';
+
 const app = express();
 
 app.set('trust proxy', 1);
+
+app.use(express.urlencoded({ extended: false }));
 
 app.use(
   session({
@@ -33,6 +50,55 @@ app.use(
     },
   })
 );
+
+let mongoClient;
+let botDb;
+
+async function initMongo() {
+  if (!MONGODB_URI) {
+    console.log('ℹ️ Mongo: MONGODB_URI not set; settings/logs pages will be unavailable');
+    return;
+  }
+
+  mongoClient = new MongoClient(MONGODB_URI);
+  await mongoClient.connect();
+  botDb = mongoClient.db(BOT_DB_NAME);
+  console.log('✅ Mongo: Connected');
+}
+
+async function getSettings() {
+  if (!botDb) return null;
+  return botDb.collection('bot_settings').findOne({ guildId: DISCORD_GUILD_ID });
+}
+
+async function upsertSettings(values) {
+  if (!botDb) return;
+  await botDb.collection('bot_settings').updateOne(
+    { guildId: DISCORD_GUILD_ID },
+    {
+      $set: {
+        ...values,
+        updatedAt: new Date(),
+      },
+      $setOnInsert: {
+        guildId: DISCORD_GUILD_ID,
+        createdAt: new Date(),
+      },
+    },
+    { upsert: true }
+  );
+}
+
+async function getRecentLogs(limit) {
+  if (!botDb) return [];
+  const n = Number.isFinite(limit) ? limit : 100;
+  return botDb
+    .collection('bot_logs')
+    .find({ guildId: DISCORD_GUILD_ID })
+    .sort({ createdAt: -1 })
+    .limit(Math.max(1, Math.min(500, n)))
+    .toArray();
+}
 
 function htmlPage(title, body) {
   return `<!doctype html>
@@ -210,13 +276,127 @@ app.get('/dashboard', requireLogin, (req, res) => {
     htmlPage(
       'Dashboard',
       `<div class="card">
+        ${nav(req)}
         <h1>Dashboard</h1>
         <p class="muted">Signed in as <strong>${displayName}</strong></p>
-        <p class="muted">This is the starter dashboard. Next we’ll add settings + logs here.</p>
-        <p><a href="/logout">Log out</a></p>
+        <p class="muted">Use the links above to manage settings and view bot logs.</p>
       </div>`
     )
   );
+});
+
+app.get('/settings', requireLogin, async (req, res) => {
+  try {
+    const settings = await getSettings();
+    const rUser = settings?.rCooldownUserMs ?? '';
+    const rChan = settings?.rCooldownChannelMs ?? '';
+    const mongoOk = Boolean(botDb);
+
+    res.send(
+      htmlPage(
+        'Settings',
+        `<div class="card">
+          ${nav(req)}
+          <h1>Settings</h1>
+          <p class="muted">Guild: <code>${DISCORD_GUILD_ID}</code></p>
+          <p class="muted">Mongo: <strong>${mongoOk ? 'connected' : 'not configured'}</strong></p>
+          <form method="POST" action="/settings" style="display:grid; gap:12px; max-width:420px;">
+            <div>
+              <label class="muted" for="rCooldownUserMs">/r cooldown (per user, ms)</label><br/>
+              <input id="rCooldownUserMs" name="rCooldownUserMs" inputmode="numeric" value="${rUser}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+            </div>
+            <div>
+              <label class="muted" for="rCooldownChannelMs">/r cooldown (per channel, ms)</label><br/>
+              <input id="rCooldownChannelMs" name="rCooldownChannelMs" inputmode="numeric" value="${rChan}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+            </div>
+            <button class="btn" type="submit">Save</button>
+          </form>
+          <p class="muted" style="margin-top:12px;">Bot reloads settings periodically, so changes can take up to ~30 seconds.</p>
+        </div>`
+      )
+    );
+  } catch (error) {
+    console.error('Settings page error:', error);
+    res.status(500).send('Settings error');
+  }
+});
+
+app.post('/settings', requireLogin, async (req, res) => {
+  try {
+    if (!botDb) {
+      return res.status(400).send('Mongo not configured');
+    }
+
+    const rCooldownUserMs = parseInt(req.body?.rCooldownUserMs, 10);
+    const rCooldownChannelMs = parseInt(req.body?.rCooldownChannelMs, 10);
+
+    const update = {};
+    if (Number.isFinite(rCooldownUserMs) && rCooldownUserMs >= 0 && rCooldownUserMs <= 600000) {
+      update.rCooldownUserMs = rCooldownUserMs;
+    }
+    if (Number.isFinite(rCooldownChannelMs) && rCooldownChannelMs >= 0 && rCooldownChannelMs <= 600000) {
+      update.rCooldownChannelMs = rCooldownChannelMs;
+    }
+
+    await upsertSettings(update);
+    res.redirect('/settings');
+  } catch (error) {
+    console.error('Save settings error:', error);
+    res.status(500).send('Save settings error');
+  }
+});
+
+app.get('/logs', requireLogin, async (req, res) => {
+  try {
+    const limit = parseInt(req.query?.limit, 10);
+    const logs = await getRecentLogs(Number.isFinite(limit) ? limit : 100);
+    const mongoOk = Boolean(botDb);
+
+    const rows = logs
+      .map((l) => {
+        const ts = l.createdAt ? new Date(l.createdAt).toISOString() : '';
+        const meta = l.meta ? JSON.stringify(l.meta) : '';
+        return `<tr>
+          <td style="white-space:nowrap; padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${ts}</td>
+          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.level || ''}</td>
+          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.event || ''}</td>
+          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.message || ''}</td>
+          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08); max-width:320px; overflow:hidden; text-overflow:ellipsis;">${meta}</td>
+        </tr>`;
+      })
+      .join('');
+
+    res.send(
+      htmlPage(
+        'Logs',
+        `<div class="card">
+          ${nav(req)}
+          <h1>Logs</h1>
+          <p class="muted">Mongo: <strong>${mongoOk ? 'connected' : 'not configured'}</strong></p>
+          <p class="muted">Showing latest ${logs.length} events.</p>
+          <div style="overflow:auto;">
+            <table style="width:100%; border-collapse:collapse; font-size: 13px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(255,255,255,0.12);">Time</th>
+                  <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(255,255,255,0.12);">Level</th>
+                  <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(255,255,255,0.12);">Event</th>
+                  <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(255,255,255,0.12);">Message</th>
+                  <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(255,255,255,0.12);">Meta</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows || '<tr><td colspan="5" class="muted" style="padding:8px;">No logs yet.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>`
+      )
+    );
+  } catch (error) {
+    console.error('Logs page error:', error);
+    res.status(500).send('Logs error');
+  }
 });
 
 app.get('/health', (req, res) => {
@@ -225,4 +405,8 @@ app.get('/health', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🛠️ Bot dashboard listening on port ${PORT}`);
+});
+
+initMongo().catch((e) => {
+  console.error('Mongo init failed:', e);
 });
