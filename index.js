@@ -531,7 +531,18 @@ async function main() {
         try {
           await assertCanPostInAspectsChannel(interaction.guild);
           const categories = readAspectsFromMarkdown();
+          await interaction.editReply('Creating/updating Aspect roles (this can take a few minutes)...');
           const { created, failed } = await ensureAspectRoles(interaction.guild, categories);
+
+          if (failed && failed.length > 0) {
+            const sample = failed.slice(0, 5).join(', ');
+            await interaction.editReply(
+              `Role creation finished. Created ${created.length} missing roles. Failed ${failed.length} (sample: ${sample}). Posting menus...`
+            );
+          } else {
+            await interaction.editReply(`Role creation finished. Created ${created.length} missing roles. Posting menus...`);
+          }
+
           await postAspectsMenus(interaction.guild, categories);
 
           logEvent('info', 'aspects_posted', 'Posted Aspects menus', {
@@ -544,12 +555,10 @@ async function main() {
           if (failed && failed.length > 0) {
             const sample = failed.slice(0, 10).join(', ');
             await interaction.editReply(
-              `Posted Aspects menus in <#${ASPECTS_CHANNEL_ID}>. Created ${created.length} missing roles. Failed to create ${failed.length} roles (sample: ${sample}). Check logs for the Discord error code (common: role limit).`
+              `Posted Aspects menus in <#${ASPECTS_CHANNEL_ID}>. Created ${created.length} missing roles. Failed to create ${failed.length} roles (sample: ${sample}). Check logs for the Discord error code.`
             );
           } else {
-            await interaction.editReply(
-              `Posted Aspects menus in <#${ASPECTS_CHANNEL_ID}>. Created ${created.length} missing roles.`
-            );
+            await interaction.editReply(`Posted Aspects menus in <#${ASPECTS_CHANNEL_ID}>. Created ${created.length} missing roles.`);
           }
           return;
         } catch (e) {
