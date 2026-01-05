@@ -344,7 +344,7 @@ async function getAspectRoleMaps(guild, categories) {
   return { roleNameToId, roleIdToCategoryKey, allAspectRoleIds };
 }
 
-async function postAspectsMenus(guild, categories) {
+async function assertCanPostInAspectsChannel(guild) {
   const channel = await guild.channels.fetch(ASPECTS_CHANNEL_ID).catch(() => null);
   if (!channel || !channel.isTextBased()) {
     throw new Error(`Aspects channel not found or not text-based: ${ASPECTS_CHANNEL_ID}`);
@@ -353,12 +353,22 @@ async function postAspectsMenus(guild, categories) {
   const me = guild.members.me || (await guild.members.fetchMe().catch(() => null));
   if (me && channel?.permissionsFor) {
     const perms = channel.permissionsFor(me);
-    if (perms && (!perms.has(PermissionsBitField.Flags.ViewChannel) || !perms.has(PermissionsBitField.Flags.SendMessages))) {
+    const missing = [];
+    if (perms && !perms.has(PermissionsBitField.Flags.ViewChannel)) missing.push('View Channel');
+    if (perms && !perms.has(PermissionsBitField.Flags.SendMessages)) missing.push('Send Messages');
+    if (perms && !perms.has(PermissionsBitField.Flags.ReadMessageHistory)) missing.push('Read Message History');
+    if (missing.length > 0) {
       throw new Error(
-        `Missing channel permissions in #aspects. Need View Channel + Send Messages. (channelId=${ASPECTS_CHANNEL_ID})`
+        `Missing channel permissions in #aspects (channelId=${ASPECTS_CHANNEL_ID}): ${missing.join(', ')}`
       );
     }
   }
+
+  return channel;
+}
+
+async function postAspectsMenus(guild, categories) {
+  const channel = await assertCanPostInAspectsChannel(guild);
 
   const { roleNameToId } = await getAspectRoleMaps(guild, categories);
 
@@ -506,6 +516,7 @@ async function main() {
         }
 
         try {
+          await assertCanPostInAspectsChannel(interaction.guild);
           const categories = readAspectsFromMarkdown();
           const { created } = await ensureAspectRoles(interaction.guild, categories);
           await postAspectsMenus(interaction.guild, categories);
