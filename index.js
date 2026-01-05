@@ -32,6 +32,10 @@ let inviteAutoDeleteEnabled = true;
 let inviteWarnEnabled = true;
 let inviteWarnDeleteSeconds = 12;
 
+let lowTrustLinkFilterEnabled = true;
+let lowTrustMinAccountAgeDays = 7;
+let lowTrustWarnDmEnabled = true;
+
 const MONGODB_URI = process.env.MONGODB_URI;
 let mongoClient;
 let botDb;
@@ -59,6 +63,10 @@ async function loadSettings() {
   if (typeof doc.inviteAutoDeleteEnabled === 'boolean') inviteAutoDeleteEnabled = doc.inviteAutoDeleteEnabled;
   if (typeof doc.inviteWarnEnabled === 'boolean') inviteWarnEnabled = doc.inviteWarnEnabled;
   if (Number.isFinite(doc.inviteWarnDeleteSeconds)) inviteWarnDeleteSeconds = doc.inviteWarnDeleteSeconds;
+
+  if (typeof doc.lowTrustLinkFilterEnabled === 'boolean') lowTrustLinkFilterEnabled = doc.lowTrustLinkFilterEnabled;
+  if (Number.isFinite(doc.lowTrustMinAccountAgeDays)) lowTrustMinAccountAgeDays = doc.lowTrustMinAccountAgeDays;
+  if (typeof doc.lowTrustWarnDmEnabled === 'boolean') lowTrustWarnDmEnabled = doc.lowTrustWarnDmEnabled;
 }
 
 async function ensureSettingsDoc() {
@@ -73,6 +81,9 @@ async function ensureSettingsDoc() {
         inviteAutoDeleteEnabled: true,
         inviteWarnEnabled: true,
         inviteWarnDeleteSeconds: 12,
+        lowTrustLinkFilterEnabled: true,
+        lowTrustMinAccountAgeDays: 7,
+        lowTrustWarnDmEnabled: true,
         createdAt: new Date(),
       },
     },
@@ -211,11 +222,20 @@ const lastRollByUser = new Map();
 const lastRollByChannel = new Map();
 
 const lastInviteWarnByUser = new Map();
+const lastLowTrustDmWarnByUser = new Map();
 
 const INVITE_REGEX = /(?:https?:\/\/)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com\/invite)\/[A-Za-z0-9-]+/i;
+const URL_REGEX = /https?:\/\//i;
 
 function pruneWarnEntries(now) {
   pruneOldEntries(lastInviteWarnByUser, 10 * 60_000, now);
+  pruneOldEntries(lastLowTrustDmWarnByUser, 10 * 60_000, now);
+}
+
+function isLowTrustAccount(user, now) {
+  if (!user?.createdTimestamp) return false;
+  const minMs = Math.max(0, lowTrustMinAccountAgeDays) * 24 * 60 * 60 * 1000;
+  return (now - user.createdTimestamp) < minMs;
 }
 
 function getCooldownRemainingMs(map, key, cooldownMs, now) {
@@ -433,11 +453,9 @@ async function main() {
       if (!message) return;
       if (message.author?.bot) return;
       if (!message.guild || message.guild.id !== DISCORD_GUILD_ID) return;
-      if (!inviteAutoDeleteEnabled) return;
 
       const content = message.content || '';
       if (!content) return;
-      if (!INVITE_REGEX.test(content)) return;
 
       const member = message.member;
       if (hasModPermission(member)) return;
@@ -445,43 +463,92 @@ async function main() {
       const userId = message.author?.id;
       const channelId = message.channel?.id;
 
-      try {
-        await message.delete();
-      } catch (e) {
-        console.error('Failed to delete invite message:', e);
-        logEvent('error', 'automod_invite_delete_failed', e?.message || String(e), {
+      const now = Date.now();
+
+      // Phase 1: invite links
+      if (inviteAutoDeleteEnabled && INVITE_REGEX.test(content)) {
+        try {
+          await message.delete();
+        } catch (e) {
+          console.error('Failed to delete invite message:', e);
+          logEvent('error', 'automod_invite_delete_failed', e?.message || String(e), {
+            userId,
+            channelId,
+            messageId: message.id,
+          });
+          return;
+        }
+
+        logEvent('info', 'automod_invite_deleted', 'Deleted Discord invite link', {
           userId,
           channelId,
           messageId: message.id,
         });
+
+        if (inviteWarnEnabled && userId && message.channel && message.channel.isTextBased()) {
+          const lastWarn = lastInviteWarnByUser.get(userId) || 0;
+          if (now - lastWarn >= 60_000) {
+            lastInviteWarnByUser.set(userId, now);
+            pruneWarnEntries(now);
+
+            const warn = await message.channel.send(
+              `⚠️ <@${userId}> invite links aren’t allowed here. If you think this was a mistake, message a moderator.`
+            );
+
+            const delayMs = Math.max(0, Math.min(120, inviteWarnDeleteSeconds)) * 1000;
+            if (delayMs > 0) {
+              setTimeout(() => {
+                warn.delete().catch(() => {});
+              }, delayMs);
+            }
+          }
+        }
+
         return;
       }
 
-      logEvent('info', 'automod_invite_deleted', 'Deleted Discord invite link', {
-        userId,
-        channelId,
-        messageId: message.id,
-      });
+      // Phase 2: low-trust link filter (account age)
+      if (lowTrustLinkFilterEnabled && URL_REGEX.test(content) && isLowTrustAccount(message.author, now)) {
+        try {
+          await message.delete();
+        } catch (e) {
+          console.error('Failed to delete low-trust link message:', e);
+          logEvent('error', 'automod_lowtrust_link_delete_failed', e?.message || String(e), {
+            userId,
+            channelId,
+            messageId: message.id,
+          });
+          return;
+        }
 
-      if (!inviteWarnEnabled) return;
-      if (!userId || !message.channel || !message.channel.isTextBased()) return;
+        logEvent('info', 'automod_lowtrust_link_deleted', 'Deleted link from low-trust account', {
+          userId,
+          channelId,
+          messageId: message.id,
+          minAccountAgeDays: lowTrustMinAccountAgeDays,
+        });
 
-      const now = Date.now();
-      const lastWarn = lastInviteWarnByUser.get(userId) || 0;
-      if (now - lastWarn < 60_000) return;
-      lastInviteWarnByUser.set(userId, now);
-      pruneWarnEntries(now);
+        if (lowTrustWarnDmEnabled && userId) {
+          const lastWarn = lastLowTrustDmWarnByUser.get(userId) || 0;
+          if (now - lastWarn >= 60_000) {
+            lastLowTrustDmWarnByUser.set(userId, now);
+            pruneWarnEntries(now);
 
-      const warn = await message.channel.send(
-        `⚠️ <@${userId}> invite links aren’t allowed here. If you think this was a mistake, message a moderator.`
-      );
+            try {
+              await message.author.send(
+                `Your message in **${message.guild.name}** was removed because new accounts can’t post links yet. ` +
+                  `Please wait until your account is at least **${lowTrustMinAccountAgeDays} day(s)** old, ` +
+                  `or message a moderator if you think this was a mistake.`
+              );
+            } catch (e) {
+              logEvent('warn', 'automod_lowtrust_dm_failed', e?.message || String(e), { userId });
+            }
+          }
+        }
 
-      const delayMs = Math.max(0, Math.min(120, inviteWarnDeleteSeconds)) * 1000;
-      if (delayMs > 0) {
-        setTimeout(() => {
-          warn.delete().catch(() => {});
-        }, delayMs);
+        return;
       }
+
     } catch (error) {
       console.error('messageCreate handler error:', error);
       logEvent('error', 'message_create_error', error?.message || String(error), { stack: error?.stack });
