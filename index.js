@@ -291,9 +291,14 @@ function buildLegacyAspectRoleName(aspectName) {
   return `Aspect: ${aspectName}`;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function ensureAspectRoles(guild, categories) {
   const created = [];
   const failed = [];
+  let remaining = 0;
   if (!guild?.members) return { created };
   const me = guild.members.me || (await guild.members.fetchMe().catch(() => null));
   if (!me) return { created };
@@ -306,45 +311,45 @@ async function ensureAspectRoles(guild, categories) {
     existingByName.set(role.name, role);
   }
 
-  const createTimeoutMs = 30_000;
+  const maxCreatesPerRun = parseInt(process.env.ASPECTS_ROLE_CREATES_PER_RUN || '25', 10);
+  const createDelayMs = parseInt(process.env.ASPECTS_ROLE_CREATE_DELAY_MS || '350', 10);
   let attemptedCreates = 0;
-  let skippedExisting = 0;
 
   for (const c of categories) {
     for (const it of c.items) {
       const roleName = buildAspectRoleName(it.name);
-      if (existingByName.has(roleName) || existingByName.has(buildLegacyAspectRoleName(it.name))) {
-        skippedExisting += 1;
+      if (existingByName.has(roleName) || existingByName.has(buildLegacyAspectRoleName(it.name))) continue;
+
+      // Defer remaining creates to the next /aspects_post run to keep interactions quick/reliable.
+      if (attemptedCreates >= maxCreatesPerRun) {
+        remaining += 1;
         continue;
       }
 
       try {
         attemptedCreates += 1;
 
-        if (attemptedCreates % 10 === 1) {
+        if (attemptedCreates % 5 === 1) {
           logEvent('info', 'aspect_role_create_progress', 'Aspect role create progress', {
             attemptedCreates,
-            skippedExisting,
             created: created.length,
             failed: failed.length,
             nextRoleName: roleName,
+            maxCreatesPerRun,
           });
         }
 
-        const roleCreatePromise = guild.roles.create({
+        const createdRole = await guild.roles.create({
           name: roleName,
           mentionable: false,
           hoist: false,
           reason: 'Dark City bot: creating missing Aspect role',
         });
 
-        const createdRole = await Promise.race([
-          roleCreatePromise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Role create timed out')), createTimeoutMs)),
-        ]);
-
         existingByName.set(roleName, createdRole);
         created.push(createdRole.id);
+
+        if (createDelayMs > 0) await sleep(createDelayMs);
       } catch (e) {
         failed.push(roleName);
         console.error('Failed to create aspect role:', roleName, e);
@@ -358,7 +363,7 @@ async function ensureAspectRoles(guild, categories) {
     }
   }
 
-  return { created, failed };
+  return { created, failed, remaining };
 }
 
 async function getAspectRoleMaps(guild, categories) {
@@ -556,18 +561,28 @@ async function main() {
         try {
           await assertCanPostInAspectsChannel(interaction.guild);
           const categories = readAspectsFromMarkdown();
-          await interaction.editReply('Creating/updating Aspect roles (this can take a few minutes)...');
-          const { created, failed } = await ensureAspectRoles(interaction.guild, categories);
+          await interaction.editReply('Creating/updating Aspect roles (batched; run may need repeating)...');
+          const { created, failed, remaining } = await ensureAspectRoles(interaction.guild, categories);
 
           if (failed && failed.length > 0) {
             const sample = failed.slice(0, 5).join(', ');
             await interaction.editReply(
-              `Role creation finished. Created ${created.length} missing roles. Failed ${failed.length} (sample: ${sample}). Posting menus...`
+              `Role creation finished. Created ${created.length} missing roles. Failed ${failed.length} (sample: ${sample}). Remaining: ${remaining || 0}.`
             );
           } else {
-            await interaction.editReply(`Role creation finished. Created ${created.length} missing roles. Posting menus...`);
+            await interaction.editReply(
+              `Role creation finished. Created ${created.length} missing roles. Remaining: ${remaining || 0}.`
+            );
           }
 
+          if (remaining && remaining > 0) {
+            await interaction.editReply(
+              `Created ${created.length} roles this run. Remaining roles to create: ${remaining}. Re-run /aspects_post to continue. (When remaining reaches 0, it will post the menus.)`
+            );
+            return;
+          }
+
+          await interaction.editReply('All roles are present. Posting menus...');
           await postAspectsMenus(interaction.guild, categories);
 
           logEvent('info', 'aspects_posted', 'Posted Aspects menus', {
