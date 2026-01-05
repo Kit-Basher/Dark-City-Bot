@@ -28,6 +28,10 @@ const DEFAULT_R_COOLDOWN_CHANNEL_MS = parseInt(process.env.R_COOLDOWN_CHANNEL_MS
 let rCooldownUserMs = DEFAULT_R_COOLDOWN_USER_MS;
 let rCooldownChannelMs = DEFAULT_R_COOLDOWN_CHANNEL_MS;
 
+let inviteAutoDeleteEnabled = true;
+let inviteWarnEnabled = true;
+let inviteWarnDeleteSeconds = 12;
+
 const MONGODB_URI = process.env.MONGODB_URI;
 let mongoClient;
 let botDb;
@@ -51,6 +55,10 @@ async function loadSettings() {
 
   if (Number.isFinite(doc.rCooldownUserMs)) rCooldownUserMs = doc.rCooldownUserMs;
   if (Number.isFinite(doc.rCooldownChannelMs)) rCooldownChannelMs = doc.rCooldownChannelMs;
+
+  if (typeof doc.inviteAutoDeleteEnabled === 'boolean') inviteAutoDeleteEnabled = doc.inviteAutoDeleteEnabled;
+  if (typeof doc.inviteWarnEnabled === 'boolean') inviteWarnEnabled = doc.inviteWarnEnabled;
+  if (Number.isFinite(doc.inviteWarnDeleteSeconds)) inviteWarnDeleteSeconds = doc.inviteWarnDeleteSeconds;
 }
 
 async function ensureSettingsDoc() {
@@ -62,6 +70,9 @@ async function ensureSettingsDoc() {
         guildId: DISCORD_GUILD_ID,
         rCooldownUserMs: DEFAULT_R_COOLDOWN_USER_MS,
         rCooldownChannelMs: DEFAULT_R_COOLDOWN_CHANNEL_MS,
+        inviteAutoDeleteEnabled: true,
+        inviteWarnEnabled: true,
+        inviteWarnDeleteSeconds: 12,
         createdAt: new Date(),
       },
     },
@@ -199,6 +210,14 @@ function roll2d6() {
 const lastRollByUser = new Map();
 const lastRollByChannel = new Map();
 
+const lastInviteWarnByUser = new Map();
+
+const INVITE_REGEX = /(?:https?:\/\/)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com\/invite)\/[A-Za-z0-9-]+/i;
+
+function pruneWarnEntries(now) {
+  pruneOldEntries(lastInviteWarnByUser, 10 * 60_000, now);
+}
+
 function getCooldownRemainingMs(map, key, cooldownMs, now) {
   if (!key || cooldownMs <= 0) return 0;
   const last = map.get(key) || 0;
@@ -221,7 +240,12 @@ async function main() {
   await registerCommands();
 
   const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages],
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMembers,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
   });
 
   client.once('ready', () => {
@@ -401,6 +425,66 @@ async function main() {
         if (alreadyReplied) await interaction.followUp({ content: msg, ephemeral: true });
         else await interaction.reply({ content: msg, ephemeral: true });
       }
+    }
+  });
+
+  client.on('messageCreate', async (message) => {
+    try {
+      if (!message) return;
+      if (message.author?.bot) return;
+      if (!message.guild || message.guild.id !== DISCORD_GUILD_ID) return;
+      if (!inviteAutoDeleteEnabled) return;
+
+      const content = message.content || '';
+      if (!content) return;
+      if (!INVITE_REGEX.test(content)) return;
+
+      const member = message.member;
+      if (hasModPermission(member)) return;
+
+      const userId = message.author?.id;
+      const channelId = message.channel?.id;
+
+      try {
+        await message.delete();
+      } catch (e) {
+        console.error('Failed to delete invite message:', e);
+        logEvent('error', 'automod_invite_delete_failed', e?.message || String(e), {
+          userId,
+          channelId,
+          messageId: message.id,
+        });
+        return;
+      }
+
+      logEvent('info', 'automod_invite_deleted', 'Deleted Discord invite link', {
+        userId,
+        channelId,
+        messageId: message.id,
+      });
+
+      if (!inviteWarnEnabled) return;
+      if (!userId || !message.channel || !message.channel.isTextBased()) return;
+
+      const now = Date.now();
+      const lastWarn = lastInviteWarnByUser.get(userId) || 0;
+      if (now - lastWarn < 60_000) return;
+      lastInviteWarnByUser.set(userId, now);
+      pruneWarnEntries(now);
+
+      const warn = await message.channel.send(
+        `⚠️ <@${userId}> invite links aren’t allowed here. If you think this was a mistake, message a moderator.`
+      );
+
+      const delayMs = Math.max(0, Math.min(120, inviteWarnDeleteSeconds)) * 1000;
+      if (delayMs > 0) {
+        setTimeout(() => {
+          warn.delete().catch(() => {});
+        }, delayMs);
+      }
+    } catch (error) {
+      console.error('messageCreate handler error:', error);
+      logEvent('error', 'message_create_error', error?.message || String(error), { stack: error?.stack });
     }
   });
 
