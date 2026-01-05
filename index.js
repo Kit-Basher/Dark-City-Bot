@@ -24,6 +24,8 @@ const DISCORD_BOT_TOKEN = requireEnv('DISCORD_BOT_TOKEN');
 const DISCORD_APPLICATION_ID = requireEnv('DISCORD_APPLICATION_ID');
 const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
 
+const BUILD_STAMP = '555e964+buildstamp';
+
 const MODERATOR_ROLE_ID = process.env.MODERATOR_ROLE_ID || process.env.DASHBOARD_ALLOWED_ROLE_ID || '';
 
 const ASPECTS_CHANNEL_ID = process.env.ASPECTS_CHANNEL_ID || '1457635644338868317';
@@ -534,6 +536,13 @@ async function main() {
 
   client.once('ready', () => {
     console.log(`🤖 Logged in as ${client.user.tag}`);
+    console.log('🔧 Build:', {
+      BUILD_STAMP,
+      renderCommit: process.env.RENDER_GIT_COMMIT,
+      aspectsChannelId: ASPECTS_CHANNEL_ID,
+      aspectsRoleCreatesPerRun: process.env.ASPECTS_ROLE_CREATES_PER_RUN || '25',
+      aspectsRoleCreateDelayMs: process.env.ASPECTS_ROLE_CREATE_DELAY_MS || '350',
+    });
     logEvent('info', 'bot_ready', 'Bot logged in', {
       userTag: client.user.tag,
       rCooldownUserMs,
