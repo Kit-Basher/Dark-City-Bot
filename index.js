@@ -306,20 +306,45 @@ async function ensureAspectRoles(guild, categories) {
     existingByName.set(role.name, role);
   }
 
+  const createTimeoutMs = 30_000;
+  let attemptedCreates = 0;
+  let skippedExisting = 0;
+
   for (const c of categories) {
     for (const it of c.items) {
       const roleName = buildAspectRoleName(it.name);
-      if (existingByName.has(roleName) || existingByName.has(buildLegacyAspectRoleName(it.name))) continue;
+      if (existingByName.has(roleName) || existingByName.has(buildLegacyAspectRoleName(it.name))) {
+        skippedExisting += 1;
+        continue;
+      }
 
       try {
-        const role = await guild.roles.create({
+        attemptedCreates += 1;
+
+        if (attemptedCreates % 10 === 1) {
+          logEvent('info', 'aspect_role_create_progress', 'Aspect role create progress', {
+            attemptedCreates,
+            skippedExisting,
+            created: created.length,
+            failed: failed.length,
+            nextRoleName: roleName,
+          });
+        }
+
+        const roleCreatePromise = guild.roles.create({
           name: roleName,
           mentionable: false,
           hoist: false,
           reason: 'Dark City bot: creating missing Aspect role',
         });
-        existingByName.set(roleName, role);
-        created.push(role.id);
+
+        const createdRole = await Promise.race([
+          roleCreatePromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Role create timed out')), createTimeoutMs)),
+        ]);
+
+        existingByName.set(roleName, createdRole);
+        created.push(createdRole.id);
       } catch (e) {
         failed.push(roleName);
         console.error('Failed to create aspect role:', roleName, e);
