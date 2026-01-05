@@ -238,6 +238,10 @@ function readAspectsFromMarkdown() {
 }
 
 function buildAspectRoleName(aspectName) {
+  return `${aspectName}`;
+}
+
+function buildLegacyAspectRoleName(aspectName) {
   return `Aspect: ${aspectName}`;
 }
 
@@ -258,7 +262,7 @@ async function ensureAspectRoles(guild, categories) {
   for (const c of categories) {
     for (const it of c.items) {
       const roleName = buildAspectRoleName(it.name);
-      if (existingByName.has(roleName)) continue;
+      if (existingByName.has(roleName) || existingByName.has(buildLegacyAspectRoleName(it.name))) continue;
       const role = await guild.roles.create({
         name: roleName,
         mentionable: false,
@@ -281,7 +285,9 @@ async function getAspectRoleMaps(guild, categories) {
   for (const c of categories) {
     for (const it of c.items) {
       const roleName = buildAspectRoleName(it.name);
-      const role = guild.roles.cache.find((r) => r.name === roleName);
+      const role =
+        guild.roles.cache.find((r) => r.name === roleName) ||
+        guild.roles.cache.find((r) => r.name === buildLegacyAspectRoleName(it.name));
       if (!role) continue;
       roleNameToId.set(it.name, role.id);
       roleIdToCategoryKey.set(role.id, c.key);
@@ -296,6 +302,16 @@ async function postAspectsMenus(guild, categories) {
   const channel = await guild.channels.fetch(ASPECTS_CHANNEL_ID).catch(() => null);
   if (!channel || !channel.isTextBased()) {
     throw new Error(`Aspects channel not found or not text-based: ${ASPECTS_CHANNEL_ID}`);
+  }
+
+  const me = guild.members.me || (await guild.members.fetchMe().catch(() => null));
+  if (me && channel?.permissionsFor) {
+    const perms = channel.permissionsFor(me);
+    if (perms && (!perms.has(PermissionsBitField.Flags.ViewChannel) || !perms.has(PermissionsBitField.Flags.SendMessages))) {
+      throw new Error(
+        `Missing channel permissions in #aspects. Need View Channel + Send Messages. (channelId=${ASPECTS_CHANNEL_ID})`
+      );
+    }
   }
 
   const { roleNameToId } = await getAspectRoleMaps(guild, categories);
@@ -443,18 +459,29 @@ async function main() {
           return;
         }
 
-        const categories = readAspectsFromMarkdown();
-        const { created } = await ensureAspectRoles(interaction.guild, categories);
-        await postAspectsMenus(interaction.guild, categories);
+        try {
+          const categories = readAspectsFromMarkdown();
+          const { created } = await ensureAspectRoles(interaction.guild, categories);
+          await postAspectsMenus(interaction.guild, categories);
 
-        logEvent('info', 'aspects_posted', 'Posted Aspects menus', {
-          userId: interaction.user?.id,
-          channelId: ASPECTS_CHANNEL_ID,
-          createdRoles: created.length,
-        });
+          logEvent('info', 'aspects_posted', 'Posted Aspects menus', {
+            userId: interaction.user?.id,
+            channelId: ASPECTS_CHANNEL_ID,
+            createdRoles: created.length,
+          });
 
-        await interaction.editReply(`Posted Aspects menus in <#${ASPECTS_CHANNEL_ID}>. Created ${created.length} missing roles.`);
-        return;
+          await interaction.editReply(
+            `Posted Aspects menus in <#${ASPECTS_CHANNEL_ID}>. Created ${created.length} missing roles.`
+          );
+          return;
+        } catch (e) {
+          console.error('aspects_post error:', e);
+          logEvent('error', 'aspects_post_error', e?.message || String(e), { stack: e?.stack });
+          await interaction.editReply(
+            `Failed to post in <#${ASPECTS_CHANNEL_ID}>. Most likely the bot is missing channel permissions (View Channel + Send Messages) or role permissions (Manage Roles). Error: ${e?.message || String(e)}`
+          );
+          return;
+        }
       }
 
       if (interaction.commandName === 'r') {
