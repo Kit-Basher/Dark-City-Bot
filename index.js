@@ -562,6 +562,11 @@ async function main() {
         }
         await interaction.deferReply({ ephemeral: true });
 
+        logEvent('info', 'aspects_post_started', 'Aspects post started', {
+          userId: interaction.user?.id,
+          channelId: ASPECTS_CHANNEL_ID,
+        });
+
         if (!aspectsEnabled) {
           await interaction.editReply('Aspects system is disabled.');
           return;
@@ -572,6 +577,18 @@ async function main() {
           const categories = readAspectsFromMarkdown();
           await interaction.editReply('Creating/updating Aspect roles (batched; run may need repeating)...');
           const { created, failed, remaining } = await ensureAspectRoles(interaction.guild, categories);
+
+          console.log('🔧 aspects_post role-create result:', {
+            created: created?.length || 0,
+            failed: failed?.length || 0,
+            remaining: remaining || 0,
+          });
+          logEvent('info', 'aspects_post_role_create_result', 'Aspects role creation result', {
+            userId: interaction.user?.id,
+            created: created?.length || 0,
+            failed: failed?.length || 0,
+            remaining: remaining || 0,
+          });
 
           if (failed && failed.length > 0) {
             const sample = failed.slice(0, 5).join(', ');
