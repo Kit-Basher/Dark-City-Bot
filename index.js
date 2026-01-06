@@ -24,7 +24,7 @@ const DISCORD_BOT_TOKEN = requireEnv('DISCORD_BOT_TOKEN');
 const DISCORD_APPLICATION_ID = requireEnv('DISCORD_APPLICATION_ID');
 const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
 
-const BUILD_STAMP = '555e964+buildstamp';
+const BUILD_STAMP = '7d2ed95+roles_batch_timeout';
 
 const MODERATOR_ROLE_ID = process.env.MODERATOR_ROLE_ID || process.env.DASHBOARD_ALLOWED_ROLE_ID || '';
 
@@ -297,6 +297,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ]);
+}
+
 async function ensureAspectRoles(guild, categories) {
   const created = [];
   const failed = [];
@@ -315,55 +322,74 @@ async function ensureAspectRoles(guild, categories) {
 
   const maxCreatesPerRun = parseInt(process.env.ASPECTS_ROLE_CREATES_PER_RUN || '25', 10);
   const createDelayMs = parseInt(process.env.ASPECTS_ROLE_CREATE_DELAY_MS || '350', 10);
-  let attemptedCreates = 0;
 
+  // Build list of missing roles up front so we can compute remaining reliably.
+  /** @type {string[]} */
+  const missingRoleNames = [];
   for (const c of categories) {
     for (const it of c.items) {
       const roleName = buildAspectRoleName(it.name);
       if (existingByName.has(roleName) || existingByName.has(buildLegacyAspectRoleName(it.name))) continue;
+      missingRoleNames.push(roleName);
+    }
+  }
 
-      // Defer remaining creates to the next /aspects_post run to keep interactions quick/reliable.
-      if (attemptedCreates >= maxCreatesPerRun) {
-        remaining += 1;
-        continue;
+  remaining = missingRoleNames.length;
+  const toCreateNow = missingRoleNames.slice(0, Math.max(0, maxCreatesPerRun));
+
+  const createTimeoutMs = parseInt(process.env.ASPECTS_ROLE_CREATE_TIMEOUT_MS || '20000', 10);
+  let attemptedCreates = 0;
+
+  for (const roleName of toCreateNow) {
+    try {
+      attemptedCreates += 1;
+
+      if (attemptedCreates % 5 === 1) {
+        logEvent('info', 'aspect_role_create_progress', 'Aspect role create progress', {
+          attemptedCreates,
+          created: created.length,
+          failed: failed.length,
+          nextRoleName: roleName,
+          maxCreatesPerRun,
+          remainingAtStart: missingRoleNames.length,
+        });
       }
 
-      try {
-        attemptedCreates += 1;
-
-        if (attemptedCreates % 5 === 1) {
-          logEvent('info', 'aspect_role_create_progress', 'Aspect role create progress', {
-            attemptedCreates,
-            created: created.length,
-            failed: failed.length,
-            nextRoleName: roleName,
-            maxCreatesPerRun,
-          });
-        }
-
-        const createdRole = await guild.roles.create({
+      const createdRole = await withTimeout(
+        guild.roles.create({
           name: roleName,
           mentionable: false,
           hoist: false,
           reason: 'Dark City bot: creating missing Aspect role',
-        });
+        }),
+        createTimeoutMs,
+        'Role create'
+      );
 
-        existingByName.set(roleName, createdRole);
-        created.push(createdRole.id);
+      existingByName.set(roleName, createdRole);
+      created.push(createdRole.id);
+      remaining -= 1;
 
-        if (createDelayMs > 0) await sleep(createDelayMs);
-      } catch (e) {
-        failed.push(roleName);
-        console.error('Failed to create aspect role:', roleName, e);
-        logEvent('error', 'aspect_role_create_failed', 'Failed to create aspect role', {
-          roleName,
-          discordCode: e?.code,
-          status: e?.status,
-          message: e?.message || String(e),
-        });
-      }
+      if (createDelayMs > 0) await sleep(createDelayMs);
+    } catch (e) {
+      failed.push(roleName);
+      console.error('Failed to create aspect role:', roleName, e);
+      logEvent('error', 'aspect_role_create_failed', 'Failed to create aspect role', {
+        roleName,
+        discordCode: e?.code,
+        status: e?.status,
+        message: e?.message || String(e),
+      });
+
+      // If Discord is stalling/timeouts are happening, abort this batch so /aspects_post can update its reply.
+      break;
     }
   }
+
+  // remaining should include:
+  // - any not attempted this run (missingRoleNames.length - toCreateNow.length)
+  // - any attempted but not created due to failure/abort (implicitly included since we break early)
+  remaining = Math.max(0, missingRoleNames.length - created.length);
 
   return { created, failed, remaining };
 }
