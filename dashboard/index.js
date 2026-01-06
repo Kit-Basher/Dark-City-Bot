@@ -297,6 +297,16 @@ app.get('/settings', requireLogin, async (req, res) => {
     const lowTrustLinkFilterEnabled = typeof settings?.lowTrustLinkFilterEnabled === 'boolean' ? settings.lowTrustLinkFilterEnabled : true;
     const lowTrustMinAccountAgeDays = Number.isFinite(settings?.lowTrustMinAccountAgeDays) ? settings.lowTrustMinAccountAgeDays : 7;
     const lowTrustWarnDmEnabled = typeof settings?.lowTrustWarnDmEnabled === 'boolean' ? settings.lowTrustWarnDmEnabled : true;
+
+    const spamAutoModEnabled = typeof settings?.spamAutoModEnabled === 'boolean' ? settings.spamAutoModEnabled : true;
+    const spamFloodWindowSeconds = Number.isFinite(settings?.spamFloodWindowSeconds) ? settings.spamFloodWindowSeconds : 8;
+    const spamFloodMaxMessages = Number.isFinite(settings?.spamFloodMaxMessages) ? settings.spamFloodMaxMessages : 5;
+    const spamRepeatWindowSeconds = Number.isFinite(settings?.spamRepeatWindowSeconds) ? settings.spamRepeatWindowSeconds : 30;
+    const spamRepeatMaxRepeats = Number.isFinite(settings?.spamRepeatMaxRepeats) ? settings.spamRepeatMaxRepeats : 3;
+    const spamWarnEnabled = typeof settings?.spamWarnEnabled === 'boolean' ? settings.spamWarnEnabled : true;
+    const spamWarnDeleteSeconds = Number.isFinite(settings?.spamWarnDeleteSeconds) ? settings.spamWarnDeleteSeconds : 12;
+    const spamTimeoutEnabled = typeof settings?.spamTimeoutEnabled === 'boolean' ? settings.spamTimeoutEnabled : true;
+    const spamTimeoutMinutes = Number.isFinite(settings?.spamTimeoutMinutes) ? settings.spamTimeoutMinutes : 10;
     const mongoOk = Boolean(botDb);
 
     res.send(
@@ -349,6 +359,52 @@ app.get('/settings', requireLogin, async (req, res) => {
               </label>
             </div>
 
+            <div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.12);">
+              <div class="muted" style="font-weight:700; margin-bottom:8px;">Auto-mod: Spam (flood / repeat)</div>
+              <label style="display:flex; gap:8px; align-items:center;">
+                <input type="checkbox" name="spamAutoModEnabled" ${spamAutoModEnabled ? 'checked' : ''} />
+                <span>Enable spam auto-mod</span>
+              </label>
+
+              <div style="margin-top:10px; display:grid; gap:10px;">
+                <div>
+                  <label class="muted" for="spamFloodWindowSeconds">Flood window (seconds)</label><br/>
+                  <input id="spamFloodWindowSeconds" name="spamFloodWindowSeconds" inputmode="numeric" value="${spamFloodWindowSeconds}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+                </div>
+                <div>
+                  <label class="muted" for="spamFloodMaxMessages">Max messages in window</label><br/>
+                  <input id="spamFloodMaxMessages" name="spamFloodMaxMessages" inputmode="numeric" value="${spamFloodMaxMessages}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+                </div>
+
+                <div>
+                  <label class="muted" for="spamRepeatWindowSeconds">Repeat window (seconds)</label><br/>
+                  <input id="spamRepeatWindowSeconds" name="spamRepeatWindowSeconds" inputmode="numeric" value="${spamRepeatWindowSeconds}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+                </div>
+                <div>
+                  <label class="muted" for="spamRepeatMaxRepeats">Max repeats (same message)</label><br/>
+                  <input id="spamRepeatMaxRepeats" name="spamRepeatMaxRepeats" inputmode="numeric" value="${spamRepeatMaxRepeats}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+                </div>
+
+                <label style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+                  <input type="checkbox" name="spamWarnEnabled" ${spamWarnEnabled ? 'checked' : ''} />
+                  <span>Post channel warning (temporary)</span>
+                </label>
+                <div>
+                  <label class="muted" for="spamWarnDeleteSeconds">Warning auto-delete (seconds)</label><br/>
+                  <input id="spamWarnDeleteSeconds" name="spamWarnDeleteSeconds" inputmode="numeric" value="${spamWarnDeleteSeconds}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+                </div>
+
+                <label style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+                  <input type="checkbox" name="spamTimeoutEnabled" ${spamTimeoutEnabled ? 'checked' : ''} />
+                  <span>Timeout user on repeated spam (2+ strikes)</span>
+                </label>
+                <div>
+                  <label class="muted" for="spamTimeoutMinutes">Timeout length (minutes)</label><br/>
+                  <input id="spamTimeoutMinutes" name="spamTimeoutMinutes" inputmode="numeric" value="${spamTimeoutMinutes}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+                </div>
+              </div>
+            </div>
+
             <button class="btn" type="submit">Save</button>
           </form>
           <p class="muted" style="margin-top:12px;">Bot reloads settings periodically, so changes can take up to ~30 seconds.</p>
@@ -372,10 +428,21 @@ app.post('/settings', requireLogin, async (req, res) => {
     const inviteWarnDeleteSeconds = parseInt(req.body?.inviteWarnDeleteSeconds, 10);
     const lowTrustMinAccountAgeDays = parseInt(req.body?.lowTrustMinAccountAgeDays, 10);
 
+    const spamFloodWindowSeconds = parseInt(req.body?.spamFloodWindowSeconds, 10);
+    const spamFloodMaxMessages = parseInt(req.body?.spamFloodMaxMessages, 10);
+    const spamRepeatWindowSeconds = parseInt(req.body?.spamRepeatWindowSeconds, 10);
+    const spamRepeatMaxRepeats = parseInt(req.body?.spamRepeatMaxRepeats, 10);
+    const spamWarnDeleteSeconds = parseInt(req.body?.spamWarnDeleteSeconds, 10);
+    const spamTimeoutMinutes = parseInt(req.body?.spamTimeoutMinutes, 10);
+
     const inviteAutoDeleteEnabled = req.body?.inviteAutoDeleteEnabled === 'on';
     const inviteWarnEnabled = req.body?.inviteWarnEnabled === 'on';
     const lowTrustLinkFilterEnabled = req.body?.lowTrustLinkFilterEnabled === 'on';
     const lowTrustWarnDmEnabled = req.body?.lowTrustWarnDmEnabled === 'on';
+
+    const spamAutoModEnabled = req.body?.spamAutoModEnabled === 'on';
+    const spamWarnEnabled = req.body?.spamWarnEnabled === 'on';
+    const spamTimeoutEnabled = req.body?.spamTimeoutEnabled === 'on';
 
     const update = {};
     if (Number.isFinite(rCooldownUserMs) && rCooldownUserMs >= 0 && rCooldownUserMs <= 600000) {
@@ -396,6 +463,28 @@ app.post('/settings', requireLogin, async (req, res) => {
       update.lowTrustMinAccountAgeDays = lowTrustMinAccountAgeDays;
     }
     update.lowTrustWarnDmEnabled = lowTrustWarnDmEnabled;
+
+    update.spamAutoModEnabled = spamAutoModEnabled;
+    if (Number.isFinite(spamFloodWindowSeconds) && spamFloodWindowSeconds >= 1 && spamFloodWindowSeconds <= 120) {
+      update.spamFloodWindowSeconds = spamFloodWindowSeconds;
+    }
+    if (Number.isFinite(spamFloodMaxMessages) && spamFloodMaxMessages >= 2 && spamFloodMaxMessages <= 50) {
+      update.spamFloodMaxMessages = spamFloodMaxMessages;
+    }
+    if (Number.isFinite(spamRepeatWindowSeconds) && spamRepeatWindowSeconds >= 5 && spamRepeatWindowSeconds <= 600) {
+      update.spamRepeatWindowSeconds = spamRepeatWindowSeconds;
+    }
+    if (Number.isFinite(spamRepeatMaxRepeats) && spamRepeatMaxRepeats >= 1 && spamRepeatMaxRepeats <= 20) {
+      update.spamRepeatMaxRepeats = spamRepeatMaxRepeats;
+    }
+    update.spamWarnEnabled = spamWarnEnabled;
+    if (Number.isFinite(spamWarnDeleteSeconds) && spamWarnDeleteSeconds >= 0 && spamWarnDeleteSeconds <= 120) {
+      update.spamWarnDeleteSeconds = spamWarnDeleteSeconds;
+    }
+    update.spamTimeoutEnabled = spamTimeoutEnabled;
+    if (Number.isFinite(spamTimeoutMinutes) && spamTimeoutMinutes >= 1 && spamTimeoutMinutes <= 43200) {
+      update.spamTimeoutMinutes = spamTimeoutMinutes;
+    }
 
     await upsertSettings(update);
     res.redirect('/settings');

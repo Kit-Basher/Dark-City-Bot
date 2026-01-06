@@ -44,6 +44,16 @@ let lowTrustLinkFilterEnabled = true;
 let lowTrustMinAccountAgeDays = 7;
 let lowTrustWarnDmEnabled = true;
 
+let spamAutoModEnabled = true;
+let spamFloodWindowSeconds = 8;
+let spamFloodMaxMessages = 5;
+let spamRepeatWindowSeconds = 30;
+let spamRepeatMaxRepeats = 3;
+let spamWarnEnabled = true;
+let spamWarnDeleteSeconds = 12;
+let spamTimeoutEnabled = true;
+let spamTimeoutMinutes = 10;
+
 let aspectsEnabled = true;
 let aspectsMaxSelected = 2;
 
@@ -79,6 +89,16 @@ async function loadSettings() {
   if (Number.isFinite(doc.lowTrustMinAccountAgeDays)) lowTrustMinAccountAgeDays = doc.lowTrustMinAccountAgeDays;
   if (typeof doc.lowTrustWarnDmEnabled === 'boolean') lowTrustWarnDmEnabled = doc.lowTrustWarnDmEnabled;
 
+  if (typeof doc.spamAutoModEnabled === 'boolean') spamAutoModEnabled = doc.spamAutoModEnabled;
+  if (Number.isFinite(doc.spamFloodWindowSeconds)) spamFloodWindowSeconds = doc.spamFloodWindowSeconds;
+  if (Number.isFinite(doc.spamFloodMaxMessages)) spamFloodMaxMessages = doc.spamFloodMaxMessages;
+  if (Number.isFinite(doc.spamRepeatWindowSeconds)) spamRepeatWindowSeconds = doc.spamRepeatWindowSeconds;
+  if (Number.isFinite(doc.spamRepeatMaxRepeats)) spamRepeatMaxRepeats = doc.spamRepeatMaxRepeats;
+  if (typeof doc.spamWarnEnabled === 'boolean') spamWarnEnabled = doc.spamWarnEnabled;
+  if (Number.isFinite(doc.spamWarnDeleteSeconds)) spamWarnDeleteSeconds = doc.spamWarnDeleteSeconds;
+  if (typeof doc.spamTimeoutEnabled === 'boolean') spamTimeoutEnabled = doc.spamTimeoutEnabled;
+  if (Number.isFinite(doc.spamTimeoutMinutes)) spamTimeoutMinutes = doc.spamTimeoutMinutes;
+
   if (typeof doc.aspectsEnabled === 'boolean') aspectsEnabled = doc.aspectsEnabled;
   if (Number.isFinite(doc.aspectsMaxSelected)) aspectsMaxSelected = doc.aspectsMaxSelected;
 }
@@ -98,6 +118,16 @@ async function ensureSettingsDoc() {
         lowTrustLinkFilterEnabled: true,
         lowTrustMinAccountAgeDays: 7,
         lowTrustWarnDmEnabled: true,
+
+        spamAutoModEnabled: true,
+        spamFloodWindowSeconds: 8,
+        spamFloodMaxMessages: 5,
+        spamRepeatWindowSeconds: 30,
+        spamRepeatMaxRepeats: 3,
+        spamWarnEnabled: true,
+        spamWarnDeleteSeconds: 12,
+        spamTimeoutEnabled: true,
+        spamTimeoutMinutes: 10,
         aspectsEnabled: true,
         aspectsMaxSelected: 2,
         createdAt: new Date(),
@@ -564,6 +594,11 @@ const lastRollByChannel = new Map();
 
 const lastInviteWarnByUser = new Map();
 const lastLowTrustDmWarnByUser = new Map();
+const lastSpamWarnByUser = new Map();
+
+const recentMessageTimestampsByUser = new Map();
+const lastMessageNormByUser = new Map();
+const spamStrikeCountByUser = new Map();
 
 // Prevent concurrent runs of long-running commands per guild.
 // Value shape: { startedAt: number, timer: NodeJS.Timeout }
@@ -583,6 +618,19 @@ const URL_REGEX = /https?:\/\//i;
 function pruneWarnEntries(now) {
   pruneOldEntries(lastInviteWarnByUser, 10 * 60_000, now);
   pruneOldEntries(lastLowTrustDmWarnByUser, 10 * 60_000, now);
+  pruneOldEntries(lastSpamWarnByUser, 10 * 60_000, now);
+}
+
+function normalizeForRepeatCheck(content) {
+  return String(content || '')
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/<@!?\d+>/g, '@user')
+    .replace(/<#[0-9]+>/g, '#channel')
+    .replace(/<@&[0-9]+>/g, '@role')
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function isLowTrustAccount(user, now) {
@@ -609,6 +657,12 @@ async function main() {
   await initMongo();
   await ensureSettingsDoc();
   await loadSettings();
+
+  if (botDb) {
+    setInterval(() => {
+      loadSettings().catch(() => {});
+    }, 30_000);
+  }
 
   await registerCommands();
 
@@ -1184,15 +1238,104 @@ async function main() {
         return;
       }
 
+      if (spamAutoModEnabled && userId && channelId) {
+        const floodWindowMs = Math.max(1, spamFloodWindowSeconds) * 1000;
+        const repeatWindowMs = Math.max(1, spamRepeatWindowSeconds) * 1000;
+
+        const tsList = recentMessageTimestampsByUser.get(userId) || [];
+        const kept = tsList.filter((ts) => now - ts <= Math.max(floodWindowMs, repeatWindowMs));
+        kept.push(now);
+        recentMessageTimestampsByUser.set(userId, kept);
+
+        const withinFlood = kept.filter((ts) => now - ts <= floodWindowMs);
+        const floodTriggered = withinFlood.length > Math.max(1, spamFloodMaxMessages);
+
+        const norm = normalizeForRepeatCheck(content);
+        const last = lastMessageNormByUser.get(userId) || { norm: '', lastAt: 0, repeats: 0 };
+        let repeats = 0;
+        if (norm && last.norm && norm === last.norm && (now - last.lastAt) <= repeatWindowMs) {
+          repeats = (last.repeats || 0) + 1;
+        }
+        lastMessageNormByUser.set(userId, { norm, lastAt: now, repeats });
+
+        const repeatTriggered = repeats >= Math.max(1, spamRepeatMaxRepeats);
+
+        if (floodTriggered || repeatTriggered) {
+          try {
+            await message.delete();
+          } catch (e) {
+            logEvent('error', 'automod_spam_delete_failed', e?.message || String(e), {
+              userId,
+              channelId,
+              messageId: message.id,
+              floodTriggered,
+              repeatTriggered,
+            });
+          }
+
+          const reason = floodTriggered ? 'message flood' : 'repeated messages';
+          logEvent('info', 'automod_spam_deleted', 'Deleted spam message', {
+            userId,
+            channelId,
+            messageId: message.id,
+            reason,
+            floodCountInWindow: withinFlood.length,
+            repeats,
+          });
+
+          const strikes = (spamStrikeCountByUser.get(userId) || 0) + 1;
+          spamStrikeCountByUser.set(userId, strikes);
+
+          if (spamWarnEnabled && message.channel && message.channel.isTextBased()) {
+            const lastWarn = lastSpamWarnByUser.get(userId) || 0;
+            if (now - lastWarn >= 20_000) {
+              lastSpamWarnByUser.set(userId, now);
+              pruneWarnEntries(now);
+              const warn = await message.channel.send(
+                `⚠️ <@${userId}> please slow down — spam (${reason}) isn’t allowed. Continued spam may result in a timeout.`
+              );
+              const delayMs = Math.max(0, Math.min(120, spamWarnDeleteSeconds)) * 1000;
+              if (delayMs > 0) {
+                setTimeout(() => {
+                  warn.delete().catch(() => {});
+                }, delayMs);
+              }
+            }
+          }
+
+          if (spamTimeoutEnabled && spamTimeoutMinutes > 0 && strikes >= 2) {
+            const ms = Math.min(28 * 24 * 60, Math.max(1, spamTimeoutMinutes)) * 60_000;
+            try {
+              if (message.member?.timeout) {
+                await message.member.timeout(ms, `Auto-mod: spam (${reason})`);
+                logEvent('info', 'automod_spam_timeout', 'Timed out member for spam', {
+                  userId,
+                  channelId,
+                  minutes: spamTimeoutMinutes,
+                  strikes,
+                  reason,
+                });
+              }
+            } catch (e) {
+              logEvent('error', 'automod_spam_timeout_failed', e?.message || String(e), {
+                userId,
+                channelId,
+                minutes: spamTimeoutMinutes,
+                strikes,
+                reason,
+              });
+            }
+          }
+
+          return;
+        }
+      }
+
     } catch (error) {
       console.error('messageCreate handler error:', error);
       logEvent('error', 'message_create_error', error?.message || String(error), { stack: error?.stack });
     }
   });
-
-  setInterval(() => {
-    loadSettings().catch((e) => console.error('Failed to reload settings:', e));
-  }, 30000);
 
   await client.login(DISCORD_BOT_TOKEN);
 }
