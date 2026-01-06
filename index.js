@@ -54,6 +54,8 @@ let spamWarnEnabled = true;
 let spamWarnDeleteSeconds = 12;
 let spamTimeoutEnabled = true;
 let spamTimeoutMinutes = 10;
+/** @type {string[]} */
+let spamIgnoredChannelIds = [];
 
 let aspectsEnabled = true;
 let aspectsMaxSelected = 2;
@@ -100,6 +102,15 @@ async function loadSettings() {
   if (typeof doc.spamTimeoutEnabled === 'boolean') spamTimeoutEnabled = doc.spamTimeoutEnabled;
   if (Number.isFinite(doc.spamTimeoutMinutes)) spamTimeoutMinutes = doc.spamTimeoutMinutes;
 
+  if (Array.isArray(doc.spamIgnoredChannelIds)) {
+    spamIgnoredChannelIds = doc.spamIgnoredChannelIds.map((x) => String(x).trim()).filter(Boolean);
+  } else if (typeof doc.spamIgnoredChannelIds === 'string') {
+    spamIgnoredChannelIds = doc.spamIgnoredChannelIds
+      .split(/[\n,]/g)
+      .map((x) => String(x).trim())
+      .filter(Boolean);
+  }
+
   if (typeof doc.aspectsEnabled === 'boolean') aspectsEnabled = doc.aspectsEnabled;
   if (Number.isFinite(doc.aspectsMaxSelected)) aspectsMaxSelected = doc.aspectsMaxSelected;
 }
@@ -129,6 +140,7 @@ async function ensureSettingsDoc() {
         spamWarnDeleteSeconds: 12,
         spamTimeoutEnabled: true,
         spamTimeoutMinutes: 10,
+        spamIgnoredChannelIds: [],
         aspectsEnabled: true,
         aspectsMaxSelected: 2,
         createdAt: new Date(),
@@ -1239,7 +1251,12 @@ async function main() {
         return;
       }
 
-      if (spamAutoModEnabled && userId && channelId) {
+      if (
+        spamAutoModEnabled &&
+        userId &&
+        channelId &&
+        !spamIgnoredChannelIds.includes(channelId)
+      ) {
         const floodWindowMs = Math.max(1, spamFloodWindowSeconds) * 1000;
         const repeatWindowMs = Math.max(1, spamRepeatWindowSeconds) * 1000;
 

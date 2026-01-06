@@ -307,6 +307,9 @@ app.get('/settings', requireLogin, async (req, res) => {
     const spamWarnDeleteSeconds = Number.isFinite(settings?.spamWarnDeleteSeconds) ? settings.spamWarnDeleteSeconds : 12;
     const spamTimeoutEnabled = typeof settings?.spamTimeoutEnabled === 'boolean' ? settings.spamTimeoutEnabled : true;
     const spamTimeoutMinutes = Number.isFinite(settings?.spamTimeoutMinutes) ? settings.spamTimeoutMinutes : 10;
+    const spamIgnoredChannelIds = Array.isArray(settings?.spamIgnoredChannelIds)
+      ? settings.spamIgnoredChannelIds.join(',')
+      : (settings?.spamIgnoredChannelIds ?? '');
     const mongoOk = Boolean(botDb);
 
     res.send(
@@ -402,6 +405,11 @@ app.get('/settings', requireLogin, async (req, res) => {
                   <label class="muted" for="spamTimeoutMinutes">Timeout length (minutes)</label><br/>
                   <input id="spamTimeoutMinutes" name="spamTimeoutMinutes" inputmode="numeric" value="${spamTimeoutMinutes}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
                 </div>
+
+                <div>
+                  <label class="muted" for="spamIgnoredChannelIds">Ignored channel IDs (comma or newline separated)</label><br/>
+                  <textarea id="spamIgnoredChannelIds" name="spamIgnoredChannelIds" rows="3" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;">${spamIgnoredChannelIds}</textarea>
+                </div>
               </div>
             </div>
 
@@ -434,6 +442,10 @@ app.post('/settings', requireLogin, async (req, res) => {
     const spamRepeatMaxRepeats = parseInt(req.body?.spamRepeatMaxRepeats, 10);
     const spamWarnDeleteSeconds = parseInt(req.body?.spamWarnDeleteSeconds, 10);
     const spamTimeoutMinutes = parseInt(req.body?.spamTimeoutMinutes, 10);
+    const spamIgnoredChannelIds = String(req.body?.spamIgnoredChannelIds || '')
+      .split(/[\n,]/g)
+      .map((x) => String(x).trim())
+      .filter(Boolean);
 
     const inviteAutoDeleteEnabled = req.body?.inviteAutoDeleteEnabled === 'on';
     const inviteWarnEnabled = req.body?.inviteWarnEnabled === 'on';
@@ -485,6 +497,7 @@ app.post('/settings', requireLogin, async (req, res) => {
     if (Number.isFinite(spamTimeoutMinutes) && spamTimeoutMinutes >= 1 && spamTimeoutMinutes <= 43200) {
       update.spamTimeoutMinutes = spamTimeoutMinutes;
     }
+    update.spamIgnoredChannelIds = spamIgnoredChannelIds;
 
     await upsertSettings(update);
     res.redirect('/settings');
