@@ -676,7 +676,7 @@ async function main() {
     ],
   });
 
-  client.once('ready', () => {
+  client.once('clientReady', () => {
     console.log(`🤖 Logged in as ${client.user.tag}`);
     console.log('🔧 Build:', {
       BUILD_STAMP,
