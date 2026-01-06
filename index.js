@@ -66,6 +66,13 @@ let spamBypassRoleIds = [];
 let aspectsEnabled = true;
 let aspectsMaxSelected = 2;
 
+let xpEnabled = false;
+let xpPerMessage = 1;
+let xpCooldownSeconds = 60;
+let xpMinMessageChars = 20;
+/** @type {string[]} */
+let xpAllowedChannelIds = [];
+
 const MONGODB_URI = process.env.MONGODB_URI;
 let mongoClient;
 let botDb;
@@ -129,6 +136,19 @@ async function loadSettings() {
 
   if (typeof doc.aspectsEnabled === 'boolean') aspectsEnabled = doc.aspectsEnabled;
   if (Number.isFinite(doc.aspectsMaxSelected)) aspectsMaxSelected = doc.aspectsMaxSelected;
+
+  if (typeof doc.xpEnabled === 'boolean') xpEnabled = doc.xpEnabled;
+  if (Number.isFinite(doc.xpPerMessage)) xpPerMessage = doc.xpPerMessage;
+  if (Number.isFinite(doc.xpCooldownSeconds)) xpCooldownSeconds = doc.xpCooldownSeconds;
+  if (Number.isFinite(doc.xpMinMessageChars)) xpMinMessageChars = doc.xpMinMessageChars;
+  if (Array.isArray(doc.xpAllowedChannelIds)) {
+    xpAllowedChannelIds = doc.xpAllowedChannelIds.map((x) => String(x).trim()).filter(Boolean);
+  } else if (typeof doc.xpAllowedChannelIds === 'string') {
+    xpAllowedChannelIds = doc.xpAllowedChannelIds
+      .split(/[\n,]/g)
+      .map((x) => String(x).trim())
+      .filter(Boolean);
+  }
 }
 
 async function ensureSettingsDoc() {
@@ -161,6 +181,12 @@ async function ensureSettingsDoc() {
         spamBypassRoleIds: [],
         aspectsEnabled: true,
         aspectsMaxSelected: 2,
+
+        xpEnabled: false,
+        xpPerMessage: 1,
+        xpCooldownSeconds: 60,
+        xpMinMessageChars: 20,
+        xpAllowedChannelIds: [],
         createdAt: new Date(),
       },
     },
@@ -717,6 +743,8 @@ const lastInviteWarnByUser = new Map();
 const lastLowTrustDmWarnByUser = new Map();
 const lastSpamWarnByUser = new Map();
 
+const lastXpAwardAtByUser = new Map();
+
 const recentMessageTimestampsByUser = new Map();
 const lastMessageNormByUser = new Map();
 // Value shape: { count: number, lastAt: number }
@@ -741,6 +769,18 @@ function pruneWarnEntries(now) {
   pruneOldEntries(lastInviteWarnByUser, 10 * 60_000, now);
   pruneOldEntries(lastLowTrustDmWarnByUser, 10 * 60_000, now);
   pruneOldEntries(lastSpamWarnByUser, 10 * 60_000, now);
+}
+
+function isXpAllowedChannel(message) {
+  const ch = message?.channel;
+  if (!ch) return false;
+  if (!xpAllowedChannelIds || xpAllowedChannelIds.length === 0) return false;
+
+  const channelId = ch?.id;
+  const parentId = ch?.parentId;
+  if (channelId && xpAllowedChannelIds.includes(channelId)) return true;
+  if (parentId && xpAllowedChannelIds.includes(parentId)) return true;
+  return false;
 }
 
 function normalizeForRepeatCheck(content) {
@@ -1373,6 +1413,41 @@ async function main() {
       const channelId = message.channel?.id;
 
       const now = Date.now();
+
+      if (
+        xpEnabled &&
+        userId &&
+        isXpAllowedChannel(message) &&
+        Number.isFinite(xpPerMessage) &&
+        xpPerMessage !== 0
+      ) {
+        const minChars = Math.max(0, xpMinMessageChars);
+        if (minChars === 0 || String(content).trim().length >= minChars) {
+          const cooldownMs = Math.max(0, xpCooldownSeconds) * 1000;
+          const lastAt = lastXpAwardAtByUser.get(userId) || 0;
+          if (cooldownMs === 0 || (now - lastAt) >= cooldownMs) {
+            lastXpAwardAtByUser.set(userId, now);
+            pruneOldEntries(lastXpAwardAtByUser, Math.max(60_000, cooldownMs) * 10, now);
+
+            try {
+              await darkCityApiRequest('/api/characters/discord/award-xp', {
+                method: 'POST',
+                body: JSON.stringify({ discordUserId: userId, amount: xpPerMessage }),
+              });
+              logEvent('info', 'xp_awarded', 'Awarded XP for message activity', {
+                userId,
+                channelId,
+                amount: xpPerMessage,
+              });
+            } catch (e) {
+              logEvent('warn', 'xp_award_failed', e?.message || String(e), {
+                userId,
+                channelId,
+              });
+            }
+          }
+        }
+      }
 
       // Phase 1: invite links
       if (inviteAutoDeleteEnabled && INVITE_REGEX.test(content)) {

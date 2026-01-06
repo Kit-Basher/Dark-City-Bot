@@ -393,6 +393,14 @@ app.get('/settings', requireLogin, async (req, res) => {
     const spamBypassRoleIds = Array.isArray(settings?.spamBypassRoleIds)
       ? settings.spamBypassRoleIds.join(',')
       : (settings?.spamBypassRoleIds ?? '');
+
+    const xpEnabled = typeof settings?.xpEnabled === 'boolean' ? settings.xpEnabled : false;
+    const xpPerMessage = Number.isFinite(settings?.xpPerMessage) ? settings.xpPerMessage : 1;
+    const xpCooldownSeconds = Number.isFinite(settings?.xpCooldownSeconds) ? settings.xpCooldownSeconds : 60;
+    const xpMinMessageChars = Number.isFinite(settings?.xpMinMessageChars) ? settings.xpMinMessageChars : 20;
+    const xpAllowedChannelIds = Array.isArray(settings?.xpAllowedChannelIds)
+      ? settings.xpAllowedChannelIds.join(',')
+      : (settings?.xpAllowedChannelIds ?? '');
     const mongoOk = Boolean(botDb);
 
     res.send(
@@ -506,6 +514,32 @@ app.get('/settings', requireLogin, async (req, res) => {
               </div>
             </div>
 
+            <div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.12);">
+              <div class="muted" style="font-weight:700; margin-bottom:8px;">XP: Activity rewards</div>
+              <label style="display:flex; gap:8px; align-items:center;">
+                <input type="checkbox" name="xpEnabled" ${xpEnabled ? 'checked' : ''} />
+                <span>Enable XP awards for messages</span>
+              </label>
+              <div style="margin-top:10px; display:grid; gap:10px;">
+                <div>
+                  <label class="muted" for="xpPerMessage">XP per message</label><br/>
+                  <input id="xpPerMessage" name="xpPerMessage" inputmode="numeric" value="${xpPerMessage}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+                </div>
+                <div>
+                  <label class="muted" for="xpCooldownSeconds">Cooldown per user (seconds)</label><br/>
+                  <input id="xpCooldownSeconds" name="xpCooldownSeconds" inputmode="numeric" value="${xpCooldownSeconds}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+                </div>
+                <div>
+                  <label class="muted" for="xpMinMessageChars">Minimum message length (chars)</label><br/>
+                  <input id="xpMinMessageChars" name="xpMinMessageChars" inputmode="numeric" value="${xpMinMessageChars}" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+                </div>
+                <div>
+                  <label class="muted" for="xpAllowedChannelIds">Allowed channel IDs (Districts) (comma or newline separated)</label><br/>
+                  <textarea id="xpAllowedChannelIds" name="xpAllowedChannelIds" rows="3" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;">${xpAllowedChannelIds}</textarea>
+                </div>
+              </div>
+            </div>
+
             <button class="btn" type="submit">Save</button>
           </form>
           <p class="muted" style="margin-top:12px;">Bot reloads settings periodically, so changes can take up to ~30 seconds.</p>
@@ -545,6 +579,14 @@ app.post('/settings', requireLogin, async (req, res) => {
       .map((x) => String(x).trim())
       .filter(Boolean);
 
+    const xpPerMessage = parseInt(req.body?.xpPerMessage, 10);
+    const xpCooldownSeconds = parseInt(req.body?.xpCooldownSeconds, 10);
+    const xpMinMessageChars = parseInt(req.body?.xpMinMessageChars, 10);
+    const xpAllowedChannelIds = String(req.body?.xpAllowedChannelIds || '')
+      .split(/[\n,]/g)
+      .map((x) => String(x).trim())
+      .filter(Boolean);
+
     const inviteAutoDeleteEnabled = req.body?.inviteAutoDeleteEnabled === 'on';
     const inviteWarnEnabled = req.body?.inviteWarnEnabled === 'on';
     const lowTrustLinkFilterEnabled = req.body?.lowTrustLinkFilterEnabled === 'on';
@@ -553,6 +595,8 @@ app.post('/settings', requireLogin, async (req, res) => {
     const spamAutoModEnabled = req.body?.spamAutoModEnabled === 'on';
     const spamWarnEnabled = req.body?.spamWarnEnabled === 'on';
     const spamTimeoutEnabled = req.body?.spamTimeoutEnabled === 'on';
+
+    const xpEnabled = req.body?.xpEnabled === 'on';
 
     const update = {};
     if (Number.isFinite(rCooldownUserMs) && rCooldownUserMs >= 0 && rCooldownUserMs <= 600000) {
@@ -600,6 +644,18 @@ app.post('/settings', requireLogin, async (req, res) => {
     }
     update.spamIgnoredChannelIds = spamIgnoredChannelIds;
     update.spamBypassRoleIds = spamBypassRoleIds;
+
+    update.xpEnabled = xpEnabled;
+    if (Number.isFinite(xpPerMessage) && xpPerMessage >= 0 && xpPerMessage <= 100) {
+      update.xpPerMessage = xpPerMessage;
+    }
+    if (Number.isFinite(xpCooldownSeconds) && xpCooldownSeconds >= 0 && xpCooldownSeconds <= 86400) {
+      update.xpCooldownSeconds = xpCooldownSeconds;
+    }
+    if (Number.isFinite(xpMinMessageChars) && xpMinMessageChars >= 0 && xpMinMessageChars <= 5000) {
+      update.xpMinMessageChars = xpMinMessageChars;
+    }
+    update.xpAllowedChannelIds = xpAllowedChannelIds;
 
     await upsertSettings(update);
     res.redirect('/settings');
