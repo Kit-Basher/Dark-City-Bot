@@ -24,7 +24,7 @@ const DISCORD_BOT_TOKEN = requireEnv('DISCORD_BOT_TOKEN');
 const DISCORD_APPLICATION_ID = requireEnv('DISCORD_APPLICATION_ID');
 const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
 
-const BUILD_STAMP = '7d2ed95+roles_batch_timeout';
+const BUILD_STAMP = 'aspects_no_fake_timeout_mutex_rolesfetch';
 
 const MODERATOR_ROLE_ID = process.env.MODERATOR_ROLE_ID || process.env.DASHBOARD_ALLOWED_ROLE_ID || '';
 
@@ -297,13 +297,6 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function withTimeout(promise, ms, label) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
-  ]);
-}
-
 async function ensureAspectRoles(guild, categories) {
   const created = [];
   const failed = [];
@@ -313,6 +306,9 @@ async function ensureAspectRoles(guild, categories) {
   if (!me) return { created };
   const canManageRoles = me.permissions.has(PermissionsBitField.Flags.ManageRoles);
   if (!canManageRoles) return { created };
+
+  // Ensure role cache is fully populated; partial caches can cause us to think roles are missing.
+  await guild.roles.fetch().catch(() => null);
 
   const roleCache = guild.roles.cache;
   const existingByName = new Map();
@@ -336,8 +332,6 @@ async function ensureAspectRoles(guild, categories) {
 
   remaining = missingRoleNames.length;
   const toCreateNow = missingRoleNames.slice(0, Math.max(0, maxCreatesPerRun));
-
-  const createTimeoutMs = parseInt(process.env.ASPECTS_ROLE_CREATE_TIMEOUT_MS || '20000', 10);
   let attemptedCreates = 0;
   let consecutiveFailures = 0;
   const maxConsecutiveFailures = parseInt(process.env.ASPECTS_ROLE_MAX_CONSECUTIVE_FAILURES || '3', 10);
@@ -358,16 +352,12 @@ async function ensureAspectRoles(guild, categories) {
         });
       }
 
-      const createdRole = await withTimeout(
-        guild.roles.create({
-          name: roleName,
-          mentionable: false,
-          hoist: false,
-          reason: 'Dark City bot: creating missing Aspect role',
-        }),
-        createTimeoutMs,
-        'Role create'
-      );
+      const createdRole = await guild.roles.create({
+        name: roleName,
+        mentionable: false,
+        hoist: false,
+        reason: 'Dark City bot: creating missing Aspect role',
+      });
 
       existingByName.set(roleName, createdRole);
       created.push(createdRole.id);
@@ -528,6 +518,9 @@ const lastRollByChannel = new Map();
 const lastInviteWarnByUser = new Map();
 const lastLowTrustDmWarnByUser = new Map();
 
+// Prevent concurrent runs of long-running commands per guild.
+const aspectsPostLocks = new Map();
+
 const INVITE_REGEX = /(?:https?:\/\/)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com\/invite)\/[A-Za-z0-9-]+/i;
 const URL_REGEX = /https?:\/\//i;
 
@@ -598,6 +591,18 @@ async function main() {
           await interaction.reply({ content: 'Must be used in a server.', ephemeral: true });
           return;
         }
+
+        const guildId = interaction.guild.id;
+        if (aspectsPostLocks.get(guildId)) {
+          await interaction.reply({
+            content: 'An /aspects_post run is already in progress for this server. Please wait a minute and try again.',
+            ephemeral: true,
+          });
+          return;
+        }
+
+        aspectsPostLocks.set(guildId, true);
+
         await interaction.deferReply({ ephemeral: true });
 
         logEvent('info', 'aspects_post_started', 'Aspects post started', {
@@ -668,10 +673,13 @@ async function main() {
         } catch (e) {
           console.error('aspects_post error:', e);
           logEvent('error', 'aspects_post_error', e?.message || String(e), { stack: e?.stack });
+          // We already deferred; always use editReply here.
           await interaction.editReply(
-            `Failed to post in <#${ASPECTS_CHANNEL_ID}>. Most likely the bot is missing channel permissions (View Channel + Send Messages) or role permissions (Manage Roles). Error: ${e?.message || String(e)}`
+            `Failed to run /aspects_post. Error: ${e?.message || String(e)}`
           );
           return;
+        } finally {
+          aspectsPostLocks.delete(interaction.guild.id);
         }
       }
 
