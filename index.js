@@ -34,6 +34,9 @@ const ASPECTS_CHANNEL_ID = process.env.ASPECTS_CHANNEL_ID || '145763564433886831
 const DEFAULT_R_COOLDOWN_USER_MS = parseInt(process.env.R_COOLDOWN_USER_MS || '3000', 10);
 const DEFAULT_R_COOLDOWN_CHANNEL_MS = parseInt(process.env.R_COOLDOWN_CHANNEL_MS || '1000', 10);
 
+const DARK_CITY_API_BASE_URL = String(process.env.DARK_CITY_API_BASE_URL || '').trim().replace(/\/$/, '');
+const DARK_CITY_MODERATOR_PASSWORD = String(process.env.DARK_CITY_MODERATOR_PASSWORD || '').trim();
+
 let rCooldownUserMs = DEFAULT_R_COOLDOWN_USER_MS;
 let rCooldownChannelMs = DEFAULT_R_COOLDOWN_CHANNEL_MS;
 
@@ -251,6 +254,27 @@ const aspectsCleanupPrefixedCommand = new SlashCommandBuilder()
   .setName('aspects_cleanup_prefixed')
   .setDescription('Delete unused legacy Aspect: roles (memberCount=0). Use before reposting without prefix (mods only)');
 
+const cardCommand = new SlashCommandBuilder()
+  .setName('card')
+  .setDescription('Show your linked character card (level/xp)');
+
+const linkCharacterCommand = new SlashCommandBuilder()
+  .setName('linkcharacter')
+  .setDescription('Link your Discord account to your approved character (uses your server nickname)');
+
+const awardXpCommand = new SlashCommandBuilder()
+  .setName('awardxp')
+  .setDescription('Award XP to a member’s linked character (mods only)')
+  .addUserOption((opt) => opt.setName('user').setDescription('User to award XP to').setRequired(true))
+  .addIntegerOption((opt) =>
+    opt
+      .setName('amount')
+      .setDescription('XP amount (can be negative)')
+      .setRequired(true)
+      .setMinValue(-100000)
+      .setMaxValue(100000)
+  );
+
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(DISCORD_BOT_TOKEN);
   await rest.put(Routes.applicationGuildCommands(DISCORD_APPLICATION_ID, DISCORD_GUILD_ID), {
@@ -265,8 +289,77 @@ async function registerCommands() {
       aspectsPostCommand.toJSON(),
       aspectsMissingCommand.toJSON(),
       aspectsCleanupPrefixedCommand.toJSON(),
+      cardCommand.toJSON(),
+      linkCharacterCommand.toJSON(),
+      awardXpCommand.toJSON(),
     ],
   });
+}
+
+function getNicknameCharacterName(member) {
+  const raw = String(member?.displayName || member?.nickname || '').trim();
+  if (!raw) return '';
+  const idx = raw.indexOf('(');
+  const name = (idx >= 0 ? raw.slice(0, idx) : raw).trim();
+  return name;
+}
+
+function assertGameApiConfigured() {
+  if (!DARK_CITY_API_BASE_URL) {
+    throw new Error('DARK_CITY_API_BASE_URL is not set');
+  }
+  if (!DARK_CITY_MODERATOR_PASSWORD) {
+    throw new Error('DARK_CITY_MODERATOR_PASSWORD is not set');
+  }
+}
+
+async function darkCityApiRequest(path, opts) {
+  assertGameApiConfigured();
+  const url = `${DARK_CITY_API_BASE_URL}${path}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-moderator-password': DARK_CITY_MODERATOR_PASSWORD,
+    ...(opts?.headers || {}),
+  };
+  const res = await fetch(url, { ...opts, headers });
+  const text = await res.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!res.ok) {
+    const msg = json?.error || json?.message || text || `HTTP ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.body = json;
+    throw err;
+  }
+  return json;
+}
+
+async function darkCityApiGetPublicJson(path) {
+  if (!DARK_CITY_API_BASE_URL) {
+    throw new Error('DARK_CITY_API_BASE_URL is not set');
+  }
+  const url = `${DARK_CITY_API_BASE_URL}${path}`;
+  const res = await fetch(url);
+  const text = await res.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!res.ok) {
+    const msg = json?.error || json?.message || text || `HTTP ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.body = json;
+    throw err;
+  }
+  return json;
 }
 
 async function getMissingAspectRoleNames(guild, categories) {
@@ -908,6 +1001,104 @@ async function main() {
           await interaction.editReply(
             `Cleanup failed. Ensure the bot has Manage Roles and that its role is above the Aspect roles. Error: ${e?.message || String(e)}`
           );
+          return;
+        }
+      }
+
+      if (interaction.commandName === 'card') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        try {
+          const discordUserId = interaction.user?.id;
+          if (!discordUserId) {
+            await interaction.editReply('Could not resolve your Discord user ID.');
+            return;
+          }
+          const data = await darkCityApiGetPublicJson(`/api/characters/discord/by-user/${discordUserId}`);
+          const c = data?.character;
+          const next = data?.next;
+          if (!c) {
+            await interaction.editReply('No character data returned.');
+            return;
+          }
+
+          const nextLine = next?.nextLevel
+            ? `Next: level ${next.nextLevel} at ${next.nextLevelXp} XP (${next.remaining} more)`
+            : 'Max level reached.';
+          await interaction.editReply(
+            `**${c.name}**\nLevel: **${c.level}**\nXP: **${c.xp}**\n${nextLine}`
+          );
+          return;
+        } catch (e) {
+          if (e?.status === 404) {
+            const name = getNicknameCharacterName(interaction.member);
+            await interaction.editReply(
+              `No linked approved character found for you.\n` +
+                `Set your nickname to \`Character Name (Player Name)\` and run \`/linkcharacter\`.\n` +
+                (name ? `I currently read your character name as: **${name}**` : 'I could not read a character name from your nickname.')
+            );
+            return;
+          }
+          await interaction.editReply(`Failed to fetch card: ${e?.message || String(e)}`);
+          return;
+        }
+      }
+
+      if (interaction.commandName === 'linkcharacter') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        try {
+          const characterName = getNicknameCharacterName(interaction.member);
+          if (!characterName) {
+            await interaction.editReply('Your nickname must look like `Character Name (Player Name)` so I can detect the character name.');
+            return;
+          }
+
+          const discordUserId = interaction.user?.id;
+          if (!discordUserId) {
+            await interaction.editReply('Could not resolve your Discord user ID.');
+            return;
+          }
+
+          await darkCityApiRequest('/api/characters/discord/link', {
+            method: 'POST',
+            body: JSON.stringify({ discordUserId, characterName }),
+          });
+
+          await interaction.editReply(`Linked you to **${characterName}**. You can now use /card.`);
+          return;
+        } catch (e) {
+          await interaction.editReply(`Failed to link character: ${e?.message || String(e)}`);
+          return;
+        }
+      }
+
+      if (interaction.commandName === 'awardxp') {
+        if (!(await requireModerator(interaction))) return;
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        try {
+          const user = interaction.options.getUser('user', true);
+          const amount = interaction.options.getInteger('amount', true);
+          const result = await darkCityApiRequest('/api/characters/discord/award-xp', {
+            method: 'POST',
+            body: JSON.stringify({ discordUserId: user.id, amount }),
+          });
+
+          const c = result?.character;
+          const leveledUp = Boolean(result?.leveledUp);
+          const current = result?.current;
+          const next = result?.next;
+          const nextLine = next?.nextLevel
+            ? `Next: level ${next.nextLevel} at ${next.nextLevelXp} XP (${next.remaining} more)`
+            : 'Max level reached.';
+
+          await interaction.editReply(
+            `Awarded **${amount}** XP to <@${user.id}> (${c?.name || 'character'}).\n` +
+              `Now: level **${current?.level ?? '?'}** / XP **${current?.xp ?? '?'}**` +
+              (leveledUp ? '\n**Level up!** Character sheet was refreshed.' : '') +
+              `\n${nextLine}`
+          );
+          return;
+        } catch (e) {
+          await interaction.editReply(`Failed to award XP: ${e?.message || String(e)}`);
           return;
         }
       }
