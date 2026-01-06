@@ -24,7 +24,7 @@ const DISCORD_BOT_TOKEN = requireEnv('DISCORD_BOT_TOKEN');
 const DISCORD_APPLICATION_ID = requireEnv('DISCORD_APPLICATION_ID');
 const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
 
-const BUILD_STAMP = 'aspects_mutex_rolesfetch_bounded_timeouts';
+const BUILD_STAMP = 'aspects_missing_command';
 
 const MODERATOR_ROLE_ID = process.env.MODERATOR_ROLE_ID || process.env.DASHBOARD_ALLOWED_ROLE_ID || '';
 
@@ -185,6 +185,10 @@ const aspectsPostCommand = new SlashCommandBuilder()
   .setName('aspects_post')
   .setDescription('Post/update the Aspects role menus in the #aspects channel (mods only)');
 
+const aspectsMissingCommand = new SlashCommandBuilder()
+  .setName('aspects_missing')
+  .setDescription('List missing Aspect role names (for manual creation) (mods only)');
+
 const aspectsCleanupPrefixedCommand = new SlashCommandBuilder()
   .setName('aspects_cleanup_prefixed')
   .setDescription('Delete unused legacy Aspect: roles (memberCount=0). Use before reposting without prefix (mods only)');
@@ -201,9 +205,34 @@ async function registerCommands() {
       lockCommand.toJSON(),
       unlockCommand.toJSON(),
       aspectsPostCommand.toJSON(),
+      aspectsMissingCommand.toJSON(),
       aspectsCleanupPrefixedCommand.toJSON(),
     ],
   });
+}
+
+async function getMissingAspectRoleNames(guild, categories) {
+  if (!guild) return [];
+
+  const rolesFetchTimeoutMs = parseInt(process.env.ASPECTS_ROLES_FETCH_TIMEOUT_MS || '45000', 10);
+  await withTimeout(guild.roles.fetch(), rolesFetchTimeoutMs, 'guild.roles.fetch').catch(() => null);
+
+  const existingByName = new Set();
+  for (const role of guild.roles.cache.values()) {
+    if (role?.name) existingByName.add(role.name);
+  }
+
+  /** @type {string[]} */
+  const missing = [];
+  for (const c of categories) {
+    for (const it of c.items) {
+      const roleName = buildAspectRoleName(it.name);
+      if (existingByName.has(roleName) || existingByName.has(buildLegacyAspectRoleName(it.name))) continue;
+      missing.push(roleName);
+    }
+  }
+
+  return missing;
 }
 
 async function cleanupPrefixedAspectRoles(guild) {
@@ -308,11 +337,11 @@ async function ensureAspectRoles(guild, categories) {
   const created = [];
   const failed = [];
   let remaining = 0;
-  if (!guild?.members) return { created };
+  if (!guild?.members) return { created, failed, remaining: 0, missing: [] };
   const me = guild.members.me || (await guild.members.fetchMe().catch(() => null));
-  if (!me) return { created };
+  if (!me) return { created, failed, remaining: 0, missing: [] };
   const canManageRoles = me.permissions.has(PermissionsBitField.Flags.ManageRoles);
-  if (!canManageRoles) return { created };
+  if (!canManageRoles) return { created, failed, remaining: 0, missing: [] };
 
   // Ensure role cache is fully populated; partial caches can cause us to think roles are missing.
   // NOTE: Timeout does not cancel the underlying request, but the /aspects_post mutex prevents piling up runs.
@@ -407,7 +436,7 @@ async function ensureAspectRoles(guild, categories) {
   // - any attempted but not created due to failure/abort (implicitly included since we break early)
   remaining = Math.max(0, missingRoleNames.length - created.length);
 
-  return { created, failed, remaining };
+  return { created, failed, remaining, missing: missingRoleNames };
 }
 
 async function getAspectRoleMaps(guild, categories) {
@@ -664,7 +693,7 @@ async function main() {
           await assertCanPostInAspectsChannel(interaction.guild);
           const categories = readAspectsFromMarkdown();
           await interaction.editReply('Creating/updating Aspect roles (batched; run may need repeating)...');
-          const { created, failed, remaining } = await ensureAspectRoles(interaction.guild, categories);
+          const { created, failed, remaining, missing } = await ensureAspectRoles(interaction.guild, categories);
 
           console.log('🔧 aspects_post role-create result:', {
             created: created?.length || 0,
@@ -690,9 +719,14 @@ async function main() {
           }
 
           if (remaining && remaining > 0) {
-            await interaction.editReply(
-              `Created ${created.length} roles this run. Remaining roles to create: ${remaining}. Re-run /aspects_post to continue. (When remaining reaches 0, it will post the menus.)`
-            );
+            const remainingNote = `Created ${created.length} roles this run. Remaining roles to create: ${remaining}. Re-run /aspects_post to continue. (When remaining reaches 0, it will post the menus.)`;
+            const missingNames = Array.isArray(missing) ? missing : [];
+            if (missingNames.length > 0 && remaining <= 15) {
+              const list = missingNames.slice(0, 50).join('\n');
+              await interaction.editReply(`${remainingNote}\n\nMissing role names (you can create these manually):\n\`\`\`\n${list}\n\`\`\``);
+            } else {
+              await interaction.editReply(remainingNote);
+            }
             return;
           }
 
@@ -725,6 +759,41 @@ async function main() {
           return;
         } finally {
           clearAspectsPostLock(interaction.guild.id);
+        }
+      }
+
+      if (interaction.commandName === 'aspects_missing') {
+        if (!interaction.guild) {
+          await interaction.reply({ content: 'Must be used in a server.', ephemeral: true });
+          return;
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+
+        if (!(await requireModerator(interaction))) {
+          await interaction.editReply('Invalid moderator password.');
+          return;
+        }
+
+        try {
+          const categories = readAspectsFromMarkdown();
+          const missing = await getMissingAspectRoleNames(interaction.guild, categories);
+
+          if (!missing || missing.length === 0) {
+            await interaction.editReply('No missing Aspect roles detected.');
+            return;
+          }
+
+          const header = `Missing Aspect roles: ${missing.length}. Create these roles manually (exact spelling):`;
+          const list = missing.slice(0, 80).join('\n');
+          const truncated = missing.length > 80 ? `\n\n(Showing first 80 of ${missing.length})` : '';
+          await interaction.editReply(`${header}\n\n\`\`\`\n${list}\n\`\`\`${truncated}`);
+          return;
+        } catch (e) {
+          console.error('aspects_missing error:', e);
+          logEvent('error', 'aspects_missing_error', e?.message || String(e), { stack: e?.stack });
+          await interaction.editReply(`Failed to list missing roles. Error: ${e?.message || String(e)}`);
+          return;
         }
       }
 
