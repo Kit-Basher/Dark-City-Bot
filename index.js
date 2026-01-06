@@ -609,9 +609,17 @@ async function main() {
       if (!interaction.isChatInputCommand()) return;
 
       if (interaction.commandName === 'aspects_post') {
-        if (!(await requireModerator(interaction))) return;
         if (!interaction.guild) {
           await interaction.reply({ content: 'Must be used in a server.', ephemeral: true });
+          return;
+        }
+
+        // Defer immediately to avoid Discord's 3-second interaction acknowledgement window.
+        try {
+          await interaction.deferReply({ ephemeral: true });
+        } catch (e) {
+          // Interaction might be expired/invalid; nothing else we can do.
+          console.error('aspects_post deferReply error:', e);
           return;
         }
 
@@ -623,10 +631,9 @@ async function main() {
           if (ageMs > 10 * 60_000) {
             clearAspectsPostLock(guildId);
           } else {
-            await interaction.reply({
-              content: 'An /aspects_post run is already in progress for this server. Please wait a minute and try again.',
-              ephemeral: true,
-            });
+            await interaction.editReply(
+              'An /aspects_post run is already in progress for this server. Please wait a minute and try again.'
+            );
             return;
           }
         }
@@ -637,12 +644,9 @@ async function main() {
         }, ttlMs);
         aspectsPostLocks.set(guildId, { startedAt: Date.now(), timer });
 
-        try {
-          await interaction.deferReply({ ephemeral: true });
-        } catch (e) {
+        if (!(await requireModerator(interaction))) {
           clearAspectsPostLock(guildId);
-          // Interaction might be expired/invalid; nothing else we can do.
-          console.error('aspects_post deferReply error:', e);
+          await interaction.editReply('Invalid moderator password.');
           return;
         }
 
