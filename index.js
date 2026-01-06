@@ -4,6 +4,7 @@ const {
   ActionRowBuilder,
   StringSelectMenuBuilder,
   PermissionsBitField,
+  MessageFlags,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -579,7 +580,7 @@ async function requireModerator(interaction) {
   const member = interaction.member;
   const allowed = hasModPermission(member);
   if (allowed) return true;
-  await interaction.reply({ content: 'Access denied (mods only).', ephemeral: true });
+  await interaction.reply({ content: 'Access denied (mods only).', flags: MessageFlags.Ephemeral });
   return false;
 }
 
@@ -697,13 +698,13 @@ async function main() {
 
       if (interaction.commandName === 'aspects_post') {
         if (!interaction.guild) {
-          await interaction.reply({ content: 'Must be used in a server.', ephemeral: true });
+          await interaction.reply({ content: 'Must be used in a server.', flags: MessageFlags.Ephemeral });
           return;
         }
 
         // Defer immediately to avoid Discord's 3-second interaction acknowledgement window.
         try {
-          await interaction.deferReply({ ephemeral: true });
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         } catch (e) {
           // Interaction might be expired/invalid; nothing else we can do.
           console.error('aspects_post deferReply error:', e);
@@ -822,11 +823,11 @@ async function main() {
 
       if (interaction.commandName === 'aspects_missing') {
         if (!interaction.guild) {
-          await interaction.reply({ content: 'Must be used in a server.', ephemeral: true });
+          await interaction.reply({ content: 'Must be used in a server.', flags: MessageFlags.Ephemeral });
           return;
         }
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         if (!(await requireModerator(interaction))) {
           await interaction.editReply('Invalid moderator password.');
@@ -858,10 +859,10 @@ async function main() {
       if (interaction.commandName === 'aspects_cleanup_prefixed') {
         if (!(await requireModerator(interaction))) return;
         if (!interaction.guild) {
-          await interaction.reply({ content: 'Must be used in a server.', ephemeral: true });
+          await interaction.reply({ content: 'Must be used in a server.', flags: MessageFlags.Ephemeral });
           return;
         }
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
           const result = await cleanupPrefixedAspectRoles(interaction.guild);
@@ -896,7 +897,7 @@ async function main() {
           const seconds = Math.ceil(remaining / 1000);
           await interaction.reply({
             content: `⏳ Slow down! Try again in ${seconds}s.`,
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           return;
         }
@@ -924,11 +925,11 @@ async function main() {
         const count = interaction.options.getInteger('count', true);
         const channel = interaction.channel;
         if (!channel || !channel.isTextBased()) {
-          await interaction.reply({ content: 'This command can only be used in text channels.', ephemeral: true });
+          await interaction.reply({ content: 'This command can only be used in text channels.', flags: MessageFlags.Ephemeral });
           return;
         }
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const messages = await channel.messages.fetch({ limit: Math.min(100, Math.max(1, count)) });
         const deleted = await channel.bulkDelete(messages, true);
 
@@ -948,11 +949,11 @@ async function main() {
         const reason = interaction.options.getString('reason', false) || undefined;
         const guild = interaction.guild;
         if (!guild) {
-          await interaction.reply({ content: 'This command must be used in a server.', ephemeral: true });
+          await interaction.reply({ content: 'This command must be used in a server.', flags: MessageFlags.Ephemeral });
           return;
         }
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const member = await guild.members.fetch(target.id);
         if (!member) {
           await interaction.editReply('Could not find that member.');
@@ -990,12 +991,12 @@ async function main() {
         const seconds = interaction.options.getInteger('seconds', true);
         const channel = interaction.channel;
         if (!channel || typeof channel.setRateLimitPerUser !== 'function') {
-          await interaction.reply({ content: 'This command can only be used in a text channel.', ephemeral: true });
+          await interaction.reply({ content: 'This command can only be used in a text channel.', flags: MessageFlags.Ephemeral });
           return;
         }
 
         await channel.setRateLimitPerUser(seconds);
-        await interaction.reply({ content: `🐢 Slowmode set to ${seconds}s.`, ephemeral: true });
+        await interaction.reply({ content: `🐢 Slowmode set to ${seconds}s.`, flags: MessageFlags.Ephemeral });
         logEvent('info', 'mod_slowmode', 'Set slowmode', {
           userId: interaction.user?.id,
           channelId: interaction.channelId,
@@ -1011,7 +1012,7 @@ async function main() {
         const reason = interaction.options.getString('reason', false) || undefined;
 
         if (!guild || !channel || typeof channel.permissionOverwrites?.edit !== 'function') {
-          await interaction.reply({ content: 'This command can only be used in a server channel.', ephemeral: true });
+          await interaction.reply({ content: 'This command can only be used in a server channel.', flags: MessageFlags.Ephemeral });
           return;
         }
 
@@ -1026,7 +1027,7 @@ async function main() {
           { reason }
         );
 
-        await interaction.reply({ content: locking ? '🔒 Channel locked.' : '🔓 Channel unlocked.', ephemeral: true });
+        await interaction.reply({ content: locking ? '🔒 Channel locked.' : '🔓 Channel unlocked.', flags: MessageFlags.Ephemeral });
         logEvent('info', locking ? 'mod_lock' : 'mod_unlock', locking ? 'Locked channel' : 'Unlocked channel', {
           userId: interaction.user?.id,
           channelId: interaction.channelId,
@@ -1044,8 +1045,8 @@ async function main() {
       if (interaction.isRepliable()) {
         const alreadyReplied = interaction.replied || interaction.deferred;
         const msg = 'Something went wrong handling that command.';
-        if (alreadyReplied) await interaction.followUp({ content: msg, ephemeral: true });
-        else await interaction.reply({ content: msg, ephemeral: true });
+        if (alreadyReplied) await interaction.followUp({ content: msg, flags: MessageFlags.Ephemeral });
+        else await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
       }
     }
   });
@@ -1056,13 +1057,13 @@ async function main() {
       if (!interaction.customId?.startsWith('aspects:')) return;
       if (!interaction.guild) return;
       if (!aspectsEnabled) {
-        await interaction.reply({ content: 'Aspects are currently disabled.', ephemeral: true });
+        await interaction.reply({ content: 'Aspects are currently disabled.', flags: MessageFlags.Ephemeral });
         return;
       }
 
       const member = interaction.member;
       if (!member || typeof member.roles?.cache?.has !== 'function') {
-        await interaction.reply({ content: 'Could not resolve your server roles.', ephemeral: true });
+        await interaction.reply({ content: 'Could not resolve your server roles.', flags: MessageFlags.Ephemeral });
         return;
       }
 
@@ -1111,7 +1112,7 @@ async function main() {
       }
 
       if (rolesToRemove.length === 0 && rolesToAdd.length === 0) {
-        await interaction.reply({ content: `Your Aspects are unchanged. (Max ${aspectsMaxSelected})`, ephemeral: true });
+        await interaction.reply({ content: `Your Aspects are unchanged. (Max ${aspectsMaxSelected})`, flags: MessageFlags.Ephemeral });
         return;
       }
 
@@ -1124,15 +1125,15 @@ async function main() {
         removed: rolesToRemove,
       });
 
-      await interaction.reply({ content: `Updated your Aspects. (Max ${aspectsMaxSelected})`, ephemeral: true });
+      await interaction.reply({ content: `Updated your Aspects. (Max ${aspectsMaxSelected})`, flags: MessageFlags.Ephemeral });
     } catch (error) {
       console.error('Aspects select handler error:', error);
       logEvent('error', 'aspects_select_error', error?.message || String(error), { stack: error?.stack });
       if (interaction.isRepliable()) {
         const alreadyReplied = interaction.replied || interaction.deferred;
         const msg = 'Something went wrong updating your Aspects.';
-        if (alreadyReplied) await interaction.followUp({ content: msg, ephemeral: true });
-        else await interaction.reply({ content: msg, ephemeral: true });
+        if (alreadyReplied) await interaction.followUp({ content: msg, flags: MessageFlags.Ephemeral });
+        else await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
       }
     }
   });
