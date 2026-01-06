@@ -486,6 +486,10 @@ async function assertCanPostInAspectsChannel(guild) {
 async function postAspectsMenus(guild, categories) {
   const channel = await assertCanPostInAspectsChannel(guild);
 
+  // Ensure the role cache is populated so we can map all aspect names to role IDs.
+  const rolesFetchTimeoutMs = parseInt(process.env.ASPECTS_ROLES_FETCH_TIMEOUT_MS || '45000', 10);
+  await withTimeout(guild.roles.fetch(), rolesFetchTimeoutMs, 'guild.roles.fetch').catch(() => null);
+
   const { roleNameToId } = await getAspectRoleMaps(guild, categories);
 
   await channel.send('Select up to **2** Aspects total across all categories. You can change them anytime.');
