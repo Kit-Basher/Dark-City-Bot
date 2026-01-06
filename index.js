@@ -339,10 +339,13 @@ async function ensureAspectRoles(guild, categories) {
 
   const createTimeoutMs = parseInt(process.env.ASPECTS_ROLE_CREATE_TIMEOUT_MS || '20000', 10);
   let attemptedCreates = 0;
+  let consecutiveFailures = 0;
+  const maxConsecutiveFailures = parseInt(process.env.ASPECTS_ROLE_MAX_CONSECUTIVE_FAILURES || '3', 10);
 
   for (const roleName of toCreateNow) {
     try {
       attemptedCreates += 1;
+      consecutiveFailures = 0;
 
       if (attemptedCreates % 5 === 1) {
         logEvent('info', 'aspect_role_create_progress', 'Aspect role create progress', {
@@ -381,8 +384,17 @@ async function ensureAspectRoles(guild, categories) {
         message: e?.message || String(e),
       });
 
-      // If Discord is stalling/timeouts are happening, abort this batch so /aspects_post can update its reply.
-      break;
+      consecutiveFailures += 1;
+      // Back off a bit on timeouts / transient Discord stalls.
+      await sleep(2000);
+
+      // If Discord is stalling repeatedly, abort this batch so /aspects_post can update its reply.
+      if (consecutiveFailures >= maxConsecutiveFailures) {
+        break;
+      }
+
+      // Otherwise, keep going so one bad/stalled role doesn't block all progress.
+      continue;
     }
   }
 
