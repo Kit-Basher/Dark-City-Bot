@@ -311,6 +311,9 @@ app.get('/settings', requireLogin, async (req, res) => {
     const spamIgnoredChannelIds = Array.isArray(settings?.spamIgnoredChannelIds)
       ? settings.spamIgnoredChannelIds.join(',')
       : (settings?.spamIgnoredChannelIds ?? '');
+    const spamBypassRoleIds = Array.isArray(settings?.spamBypassRoleIds)
+      ? settings.spamBypassRoleIds.join(',')
+      : (settings?.spamBypassRoleIds ?? '');
     const mongoOk = Boolean(botDb);
 
     res.send(
@@ -416,6 +419,11 @@ app.get('/settings', requireLogin, async (req, res) => {
                   <label class="muted" for="spamIgnoredChannelIds">Ignored channel IDs (comma or newline separated)</label><br/>
                   <textarea id="spamIgnoredChannelIds" name="spamIgnoredChannelIds" rows="3" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;">${spamIgnoredChannelIds}</textarea>
                 </div>
+
+                <div>
+                  <label class="muted" for="spamBypassRoleIds">Bypass role IDs (comma or newline separated)</label><br/>
+                  <textarea id="spamBypassRoleIds" name="spamBypassRoleIds" rows="3" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;">${spamBypassRoleIds}</textarea>
+                </div>
               </div>
             </div>
 
@@ -450,6 +458,10 @@ app.post('/settings', requireLogin, async (req, res) => {
     const spamTimeoutMinutes = parseInt(req.body?.spamTimeoutMinutes, 10);
     const spamStrikeDecayMinutes = parseInt(req.body?.spamStrikeDecayMinutes, 10);
     const spamIgnoredChannelIds = String(req.body?.spamIgnoredChannelIds || '')
+      .split(/[\n,]/g)
+      .map((x) => String(x).trim())
+      .filter(Boolean);
+    const spamBypassRoleIds = String(req.body?.spamBypassRoleIds || '')
       .split(/[\n,]/g)
       .map((x) => String(x).trim())
       .filter(Boolean);
@@ -508,6 +520,7 @@ app.post('/settings', requireLogin, async (req, res) => {
       update.spamStrikeDecayMinutes = spamStrikeDecayMinutes;
     }
     update.spamIgnoredChannelIds = spamIgnoredChannelIds;
+    update.spamBypassRoleIds = spamBypassRoleIds;
 
     await upsertSettings(update);
     res.redirect('/settings');

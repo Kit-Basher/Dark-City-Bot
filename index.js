@@ -57,6 +57,8 @@ let spamTimeoutMinutes = 10;
 let spamStrikeDecayMinutes = 30;
 /** @type {string[]} */
 let spamIgnoredChannelIds = [];
+/** @type {string[]} */
+let spamBypassRoleIds = [];
 
 let aspectsEnabled = true;
 let aspectsMaxSelected = 2;
@@ -113,6 +115,15 @@ async function loadSettings() {
       .filter(Boolean);
   }
 
+  if (Array.isArray(doc.spamBypassRoleIds)) {
+    spamBypassRoleIds = doc.spamBypassRoleIds.map((x) => String(x).trim()).filter(Boolean);
+  } else if (typeof doc.spamBypassRoleIds === 'string') {
+    spamBypassRoleIds = doc.spamBypassRoleIds
+      .split(/[\n,]/g)
+      .map((x) => String(x).trim())
+      .filter(Boolean);
+  }
+
   if (typeof doc.aspectsEnabled === 'boolean') aspectsEnabled = doc.aspectsEnabled;
   if (Number.isFinite(doc.aspectsMaxSelected)) aspectsMaxSelected = doc.aspectsMaxSelected;
 }
@@ -144,6 +155,7 @@ async function ensureSettingsDoc() {
         spamTimeoutMinutes: 10,
         spamStrikeDecayMinutes: 30,
         spamIgnoredChannelIds: [],
+        spamBypassRoleIds: [],
         aspectsEnabled: true,
         aspectsMaxSelected: 2,
         createdAt: new Date(),
@@ -1261,6 +1273,11 @@ async function main() {
         channelId &&
         !spamIgnoredChannelIds.includes(channelId)
       ) {
+        if (spamBypassRoleIds.length > 0 && message.member?.roles?.cache) {
+          const hasBypass = spamBypassRoleIds.some((rid) => message.member.roles.cache.has(rid));
+          if (hasBypass) return;
+        }
+
         const floodWindowMs = Math.max(1, spamFloodWindowSeconds) * 1000;
         const repeatWindowMs = Math.max(1, spamRepeatWindowSeconds) * 1000;
 
