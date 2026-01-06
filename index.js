@@ -54,6 +54,7 @@ let spamWarnEnabled = true;
 let spamWarnDeleteSeconds = 12;
 let spamTimeoutEnabled = true;
 let spamTimeoutMinutes = 10;
+let spamStrikeDecayMinutes = 30;
 /** @type {string[]} */
 let spamIgnoredChannelIds = [];
 
@@ -101,6 +102,7 @@ async function loadSettings() {
   if (Number.isFinite(doc.spamWarnDeleteSeconds)) spamWarnDeleteSeconds = doc.spamWarnDeleteSeconds;
   if (typeof doc.spamTimeoutEnabled === 'boolean') spamTimeoutEnabled = doc.spamTimeoutEnabled;
   if (Number.isFinite(doc.spamTimeoutMinutes)) spamTimeoutMinutes = doc.spamTimeoutMinutes;
+  if (Number.isFinite(doc.spamStrikeDecayMinutes)) spamStrikeDecayMinutes = doc.spamStrikeDecayMinutes;
 
   if (Array.isArray(doc.spamIgnoredChannelIds)) {
     spamIgnoredChannelIds = doc.spamIgnoredChannelIds.map((x) => String(x).trim()).filter(Boolean);
@@ -140,6 +142,7 @@ async function ensureSettingsDoc() {
         spamWarnDeleteSeconds: 12,
         spamTimeoutEnabled: true,
         spamTimeoutMinutes: 10,
+        spamStrikeDecayMinutes: 30,
         spamIgnoredChannelIds: [],
         aspectsEnabled: true,
         aspectsMaxSelected: 2,
@@ -611,6 +614,7 @@ const lastSpamWarnByUser = new Map();
 
 const recentMessageTimestampsByUser = new Map();
 const lastMessageNormByUser = new Map();
+// Value shape: { count: number, lastAt: number }
 const spamStrikeCountByUser = new Map();
 
 // Prevent concurrent runs of long-running commands per guild.
@@ -1301,8 +1305,11 @@ async function main() {
             repeats,
           });
 
-          const strikes = (spamStrikeCountByUser.get(userId) || 0) + 1;
-          spamStrikeCountByUser.set(userId, strikes);
+          const decayMs = Math.max(0, spamStrikeDecayMinutes) * 60_000;
+          const prev = spamStrikeCountByUser.get(userId) || { count: 0, lastAt: 0 };
+          const prevCount = (decayMs > 0 && prev.lastAt && (now - prev.lastAt) > decayMs) ? 0 : (prev.count || 0);
+          const strikes = prevCount + 1;
+          spamStrikeCountByUser.set(userId, { count: strikes, lastAt: now });
 
           if (spamWarnEnabled && message.channel && message.channel.isTextBased()) {
             const lastWarn = lastSpamWarnByUser.get(userId) || 0;
