@@ -14,6 +14,7 @@ function nav(req) {
   return `<div style="display:flex; gap:12px; margin-bottom:14px; align-items:center;">
     <a href="/dashboard">Dashboard</a>
     <a href="/settings">Settings</a>
+    <a href="/xp">XP</a>
     <a href="/logs">Logs</a>
     <span style="flex:1"></span>
     <a href="/logout">Log out</a>
@@ -28,6 +29,9 @@ const DISCORD_REDIRECT_URI = requireEnv('DISCORD_REDIRECT_URI');
 const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
 const DASHBOARD_ALLOWED_ROLE_ID = requireEnv('DASHBOARD_ALLOWED_ROLE_ID');
 const SESSION_SECRET = requireEnv('SESSION_SECRET');
+
+const DARK_CITY_API_BASE_URL = String(process.env.DARK_CITY_API_BASE_URL || '').trim().replace(/\/$/, '');
+const DARK_CITY_MODERATOR_PASSWORD = String(process.env.DARK_CITY_MODERATOR_PASSWORD || '').trim();
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const BOT_DB_NAME = process.env.BOT_DB_NAME || 'dark_city_bot';
@@ -156,6 +160,47 @@ app.get('/', (req, res) => {
   );
 });
 
+app.get('/xp', requireLogin, (req, res) => {
+  const ok = Boolean(DARK_CITY_API_BASE_URL && DARK_CITY_MODERATOR_PASSWORD);
+  res.send(
+    htmlPage(
+      'XP',
+      `<div class="card">
+        ${nav(req)}
+        <h1>XP</h1>
+        <p class="muted">Game API: <strong>${ok ? 'configured' : 'missing env vars'}</strong></p>
+        <form method="POST" action="/xp/reset" style="display:grid; gap:12px; max-width:420px;">
+          <div>
+            <label class="muted" for="discordUserId">Discord user ID</label><br/>
+            <input id="discordUserId" name="discordUserId" inputmode="numeric" placeholder="123456789012345678" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+          </div>
+          <button class="btn" type="submit">Reset XP to 0</button>
+          <p class="muted" style="margin:0;">This updates the character’s XP immediately. If the level changes, the character sheet is regenerated.</p>
+        </form>
+      </div>`
+    )
+  );
+});
+
+app.post('/xp/reset', requireLogin, async (req, res) => {
+  try {
+    const discordUserId = String(req.body?.discordUserId || '').trim();
+    if (!discordUserId) {
+      return res.status(400).send('discordUserId is required');
+    }
+
+    await darkCityApiRequest('/api/characters/discord/set-xp', {
+      method: 'POST',
+      body: JSON.stringify({ discordUserId, xp: 0 }),
+    });
+
+    res.redirect('/xp');
+  } catch (error) {
+    console.error('XP reset error:', error);
+    res.status(500).send(`XP reset error: ${error?.message || String(error)}`);
+  }
+});
+
 app.get('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/'));
 });
@@ -193,6 +238,40 @@ async function discordFetchJson(url, options) {
     throw err;
   }
 
+  return json;
+}
+
+function assertGameApiConfigured() {
+  if (!DARK_CITY_API_BASE_URL) {
+    throw new Error('DARK_CITY_API_BASE_URL is not set');
+  }
+  if (!DARK_CITY_MODERATOR_PASSWORD) {
+    throw new Error('DARK_CITY_MODERATOR_PASSWORD is not set');
+  }
+}
+
+async function darkCityApiRequest(path, opts) {
+  assertGameApiConfigured();
+  const url = `${DARK_CITY_API_BASE_URL}${path}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-moderator-password': DARK_CITY_MODERATOR_PASSWORD,
+    ...(opts?.headers || {}),
+  };
+  const res = await fetch(url, { ...opts, headers });
+  const text = await res.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!res.ok) {
+    const msg = json?.error || json?.message || text || `HTTP ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
   return json;
 }
 
