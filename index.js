@@ -519,7 +519,16 @@ const lastInviteWarnByUser = new Map();
 const lastLowTrustDmWarnByUser = new Map();
 
 // Prevent concurrent runs of long-running commands per guild.
+// Value shape: { startedAt: number, timer: NodeJS.Timeout }
 const aspectsPostLocks = new Map();
+
+function clearAspectsPostLock(guildId) {
+  const lock = aspectsPostLocks.get(guildId);
+  if (lock?.timer) {
+    clearTimeout(lock.timer);
+  }
+  aspectsPostLocks.delete(guildId);
+}
 
 const INVITE_REGEX = /(?:https?:\/\/)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com\/invite)\/[A-Za-z0-9-]+/i;
 const URL_REGEX = /https?:\/\//i;
@@ -593,17 +602,35 @@ async function main() {
         }
 
         const guildId = interaction.guild.id;
-        if (aspectsPostLocks.get(guildId)) {
-          await interaction.reply({
-            content: 'An /aspects_post run is already in progress for this server. Please wait a minute and try again.',
-            ephemeral: true,
-          });
-          return;
+        const existingLock = aspectsPostLocks.get(guildId);
+        if (existingLock) {
+          // If something went wrong previously, don't block forever.
+          const ageMs = Date.now() - (existingLock.startedAt || 0);
+          if (ageMs > 10 * 60_000) {
+            clearAspectsPostLock(guildId);
+          } else {
+            await interaction.reply({
+              content: 'An /aspects_post run is already in progress for this server. Please wait a minute and try again.',
+              ephemeral: true,
+            });
+            return;
+          }
         }
 
-        aspectsPostLocks.set(guildId, true);
+        const ttlMs = parseInt(process.env.ASPECTS_POST_LOCK_TTL_MS || '600000', 10);
+        const timer = setTimeout(() => {
+          clearAspectsPostLock(guildId);
+        }, ttlMs);
+        aspectsPostLocks.set(guildId, { startedAt: Date.now(), timer });
 
-        await interaction.deferReply({ ephemeral: true });
+        try {
+          await interaction.deferReply({ ephemeral: true });
+        } catch (e) {
+          clearAspectsPostLock(guildId);
+          // Interaction might be expired/invalid; nothing else we can do.
+          console.error('aspects_post deferReply error:', e);
+          return;
+        }
 
         logEvent('info', 'aspects_post_started', 'Aspects post started', {
           userId: interaction.user?.id,
@@ -679,7 +706,7 @@ async function main() {
           );
           return;
         } finally {
-          aspectsPostLocks.delete(interaction.guild.id);
+          clearAspectsPostLock(interaction.guild.id);
         }
       }
 
