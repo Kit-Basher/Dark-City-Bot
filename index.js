@@ -24,7 +24,7 @@ const DISCORD_BOT_TOKEN = requireEnv('DISCORD_BOT_TOKEN');
 const DISCORD_APPLICATION_ID = requireEnv('DISCORD_APPLICATION_ID');
 const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
 
-const BUILD_STAMP = 'aspects_no_fake_timeout_mutex_rolesfetch';
+const BUILD_STAMP = 'aspects_mutex_rolesfetch_bounded_timeouts';
 
 const MODERATOR_ROLE_ID = process.env.MODERATOR_ROLE_ID || process.env.DASHBOARD_ALLOWED_ROLE_ID || '';
 
@@ -297,6 +297,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ]);
+}
+
 async function ensureAspectRoles(guild, categories) {
   const created = [];
   const failed = [];
@@ -308,7 +315,9 @@ async function ensureAspectRoles(guild, categories) {
   if (!canManageRoles) return { created };
 
   // Ensure role cache is fully populated; partial caches can cause us to think roles are missing.
-  await guild.roles.fetch().catch(() => null);
+  // NOTE: Timeout does not cancel the underlying request, but the /aspects_post mutex prevents piling up runs.
+  const rolesFetchTimeoutMs = parseInt(process.env.ASPECTS_ROLES_FETCH_TIMEOUT_MS || '45000', 10);
+  await withTimeout(guild.roles.fetch(), rolesFetchTimeoutMs, 'guild.roles.fetch').catch(() => null);
 
   const roleCache = guild.roles.cache;
   const existingByName = new Map();
@@ -335,6 +344,7 @@ async function ensureAspectRoles(guild, categories) {
   let attemptedCreates = 0;
   let consecutiveFailures = 0;
   const maxConsecutiveFailures = parseInt(process.env.ASPECTS_ROLE_MAX_CONSECUTIVE_FAILURES || '3', 10);
+  const roleCreateTimeoutMs = parseInt(process.env.ASPECTS_ROLE_CREATE_TIMEOUT_MS || '45000', 10);
 
   for (const roleName of toCreateNow) {
     try {
@@ -352,12 +362,16 @@ async function ensureAspectRoles(guild, categories) {
         });
       }
 
-      const createdRole = await guild.roles.create({
-        name: roleName,
-        mentionable: false,
-        hoist: false,
-        reason: 'Dark City bot: creating missing Aspect role',
-      });
+      const createdRole = await withTimeout(
+        guild.roles.create({
+          name: roleName,
+          mentionable: false,
+          hoist: false,
+          reason: 'Dark City bot: creating missing Aspect role',
+        }),
+        roleCreateTimeoutMs,
+        'guild.roles.create'
+      );
 
       existingByName.set(roleName, createdRole);
       created.push(createdRole.id);
