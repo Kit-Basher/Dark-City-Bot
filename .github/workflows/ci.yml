@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  dark-city-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm install
+
+      - name: Syntax check (bot)
+        run: node --check index.js
+
+      - name: Install (dashboard)
+        run: npm install
+        working-directory: dashboard
+
+      - name: Syntax check (dashboard)
+        run: node --check index.js
+        working-directory: dashboard
