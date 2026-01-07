@@ -706,6 +706,7 @@ function hasModPermission(member) {
       const roles = member.roles;
       if (roles?.cache?.has?.(MODERATOR_ROLE_ID)) return true;
       if (Array.isArray(roles) && roles.includes(MODERATOR_ROLE_ID)) return true;
+      return false;
     }
   } catch {
     // ignore
