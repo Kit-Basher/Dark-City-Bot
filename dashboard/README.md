@@ -12,6 +12,10 @@ cp .env.example .env
 npm start
 ```
 
+Then open:
+
+- http://localhost:3002
+
 ## Notes
 
 - This is its own Node project (separate `package.json`) nested inside the `dark-city-bot` repo.

@@ -21,7 +21,7 @@ function nav(req) {
   </div>`;
 }
 
-const PORT = parseInt(process.env.PORT || '3000', 10);
+const PORT = parseInt(process.env.PORT || '3002', 10);
 
 const DISCORD_CLIENT_ID = requireEnv('DISCORD_CLIENT_ID');
 const DISCORD_CLIENT_SECRET = requireEnv('DISCORD_CLIENT_SECRET');
