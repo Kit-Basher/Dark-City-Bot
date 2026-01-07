@@ -15,6 +15,10 @@ This is a **separate Git repo** from the rest of the Dark City workspace.
 
 - If you changed files under `dark-city-bot/…`, commit/push from this repo.
 
+## Ops
+
+- Render operations / troubleshooting: `RUNBOOK.md`
+
 ## Requirements
 
 - Node `22.x` (see `package.json`)
