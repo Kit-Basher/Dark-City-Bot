@@ -359,6 +359,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
         <h1>Dashboard</h1>
         <p class="muted">Signed in as <strong>${displayName}</strong></p>
         <p class="muted">Use the links above to manage settings and view bot logs.</p>
+        <p style="margin-top:14px;"><a class="btn" href="https://dark-city-map.onrender.com/?edit=1" target="_blank" rel="noopener">Open Map Editor</a></p>
       </div>`
     )
   );
