@@ -25,8 +25,6 @@ const DISCORD_BOT_TOKEN = requireEnv('DISCORD_BOT_TOKEN');
 const DISCORD_APPLICATION_ID = requireEnv('DISCORD_APPLICATION_ID');
 const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
 
-const BUILD_STAMP = 'aspects_missing_command';
-
 const MODERATOR_ROLE_ID = process.env.MODERATOR_ROLE_ID || process.env.DASHBOARD_ALLOWED_ROLE_ID || '';
 
 const ASPECTS_CHANNEL_ID = process.env.ASPECTS_CHANNEL_ID || '1457635644338868317';
