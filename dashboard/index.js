@@ -31,7 +31,7 @@ const DASHBOARD_ALLOWED_ROLE_ID = requireEnv('DASHBOARD_ALLOWED_ROLE_ID');
 const SESSION_SECRET = requireEnv('SESSION_SECRET');
 
 const DARK_CITY_API_BASE_URL = String(process.env.DARK_CITY_API_BASE_URL || '').trim().replace(/\/$/, '');
-const DARK_CITY_MODERATOR_PASSWORD = String(process.env.DARK_CITY_MODERATOR_PASSWORD || '').trim();
+let DARK_CITY_MODERATOR_PASSWORD = String(process.env.DARK_CITY_MODERATOR_PASSWORD || '').trim();
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const BOT_DB_NAME = process.env.BOT_DB_NAME || 'dark_city_bot';
@@ -351,18 +351,148 @@ app.get('/auth/discord/callback', async (req, res) => {
 
 app.get('/dashboard', requireLogin, (req, res) => {
   const displayName = req.session?.user?.global_name || req.session?.user?.username || 'Moderator';
-  res.send(
-    htmlPage(
-      'Dashboard',
-      `<div class="card">
-        ${nav(req)}
-        <h1>Dashboard</h1>
-        <p class="muted">Signed in as <strong>${displayName}</strong></p>
-        <p class="muted">Use the links above to manage settings and view bot logs.</p>
-        <p style="margin-top:14px;"><a class="btn" href="https://dark-city-map.onrender.com/?edit=1" target="_blank" rel="noopener">Open Map Editor</a></p>
-      </div>`
-    )
-  );
+  const saved = req.query?.saved === '1';
+  const error = typeof req.query?.error === 'string' ? req.query.error : '';
+  const pwSaved = req.query?.pwSaved === '1';
+  const ok = Boolean(DARK_CITY_API_BASE_URL && DARK_CITY_MODERATOR_PASSWORD);
+
+  (async () => {
+    let quizConfigJson = '';
+    let quizLoadError = '';
+
+    if (ok) {
+      try {
+        const cfg = await darkCityApiRequest('/api/quiz/config', { method: 'GET' });
+        quizConfigJson = JSON.stringify(cfg, null, 2);
+      } catch (e) {
+        quizLoadError = e?.message || String(e);
+      }
+    }
+
+    res.send(
+      htmlPage(
+        'Dashboard',
+        `<div class="card">
+          ${nav(req)}
+          <h1>Dashboard</h1>
+          <p class="muted">Signed in as <strong>${displayName}</strong></p>
+          <p class="muted">Use the links above to manage settings and view bot logs.</p>
+          <p style="margin-top:14px;"><a class="btn" href="https://dark-city-map.onrender.com/?edit=1" target="_blank" rel="noopener">Open Map Editor</a></p>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <h2 style="margin-top:0;">Moderator Password</h2>
+          <p class="muted">This updates the Game API moderator password used by the dashboard.</p>
+          ${pwSaved ? '<p class="muted"><strong>Password updated.</strong></p>' : ''}
+          ${error ? `<p class="muted"><strong>Error:</strong> ${error}</p>` : ''}
+          <form method="POST" action="/dashboard/moderator-password" style="display:grid; gap:12px; max-width:420px;">
+            <div>
+              <label class="muted" for="newPassword">New moderator password</label><br/>
+              <input id="newPassword" name="newPassword" type="password" autocomplete="new-password" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+            </div>
+            <div>
+              <label class="muted" for="confirmPassword">Confirm new password</label><br/>
+              <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+            </div>
+            <button class="btn" type="submit" ${ok ? '' : 'disabled'}>Update Moderator Password</button>
+            <p class="muted" style="margin:0;">Requires current password to already be configured on this dashboard host.</p>
+          </form>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <h2 style="margin-top:0;">Quiz Questions</h2>
+          <p class="muted">Game API: <strong>${ok ? 'configured' : 'missing env vars'}</strong></p>
+          ${saved ? '<p class="muted"><strong>Saved.</strong></p>' : ''}
+          ${quizLoadError ? `<p class="muted"><strong>Load error:</strong> ${quizLoadError}</p>` : ''}
+
+          <form method="POST" action="/dashboard/quiz-config" style="display:grid; gap:12px;">
+            <div>
+              <label class="muted" for="quizConfigJson">Quiz config JSON</label><br/>
+              <textarea id="quizConfigJson" name="quizConfigJson" rows="18" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;">${quizConfigJson}</textarea>
+              <p class="muted" style="margin:8px 0 0 0;">Edit <code>questions</code> and each question’s <code>rule</code>. Supported rule types: <code>any</code>, <code>all_groups</code>, <code>and</code>, <code>or</code>.</p>
+            </div>
+            <button class="btn" type="submit" ${ok ? '' : 'disabled'}>Save Quiz Config</button>
+          </form>
+        </div>`
+      )
+    );
+  })().catch((e) => {
+    console.error('Dashboard error:', e);
+    res.status(500).send('Dashboard error');
+  });
+});
+
+app.post('/dashboard/moderator-password', requireLogin, async (req, res) => {
+  try {
+    assertGameApiConfigured();
+
+    const newPassword = String(req.body?.newPassword || '').trim();
+    const confirmPassword = String(req.body?.confirmPassword || '').trim();
+    if (!newPassword) {
+      return res.redirect('/dashboard?error=' + encodeURIComponent('newPassword is required'));
+    }
+    if (newPassword !== confirmPassword) {
+      return res.redirect('/dashboard?error=' + encodeURIComponent('Passwords do not match'));
+    }
+
+    const url = `${DARK_CITY_API_BASE_URL}/api/characters/moderator/password`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: DARK_CITY_MODERATOR_PASSWORD, newPassword }),
+    });
+
+    const text = await response.text();
+    let json;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = null;
+    }
+
+    if (!response.ok) {
+      const msg = json?.error || json?.message || text || `HTTP ${response.status}`;
+      return res.redirect('/dashboard?error=' + encodeURIComponent(msg));
+    }
+
+    DARK_CITY_MODERATOR_PASSWORD = newPassword;
+    res.redirect('/dashboard?pwSaved=1');
+  } catch (error) {
+    console.error('Moderator password update error:', error);
+    res.redirect('/dashboard?error=' + encodeURIComponent(error?.message || 'Password update failed'));
+  }
+});
+
+app.post('/dashboard/quiz-config', requireLogin, async (req, res) => {
+  try {
+    assertGameApiConfigured();
+
+    const raw = String(req.body?.quizConfigJson || '').trim();
+    if (!raw) {
+      return res.redirect('/dashboard?error=' + encodeURIComponent('quizConfigJson is required'));
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return res.redirect('/dashboard?error=' + encodeURIComponent('Invalid JSON'));
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return res.redirect('/dashboard?error=' + encodeURIComponent('Invalid config payload'));
+    }
+
+    await darkCityApiRequest('/api/quiz/config', {
+      method: 'PUT',
+      body: JSON.stringify(parsed),
+    });
+
+    res.redirect('/dashboard?saved=1');
+  } catch (error) {
+    console.error('Quiz config save error:', error);
+    res.redirect('/dashboard?error=' + encodeURIComponent(error?.message || 'Save failed'));
+  }
 });
 
 app.get('/settings', requireLogin, async (req, res) => {
