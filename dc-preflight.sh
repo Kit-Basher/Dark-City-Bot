@@ -53,7 +53,7 @@ case "$repo_name" in
     expected_origin="https://github.com/Kit-Basher/Dark-City-Bot.git"
     ;;
   dark-city-map-web)
-    expected_origin="https://github.com/Kit-Basher/dark-city-map-web.git"
+    expected_origin="https://github.com/Kit-Basher/dark-city-map.git"
     ;;
   *)
     expected_origin=""
