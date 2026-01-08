@@ -42,8 +42,7 @@ const app = express();
 
 app.set('trust proxy', 1);
 
-app.use(express.urlencoded({ extended: false }));
-
+app.use(express.urlencoded({ extended: true }));
 app.use(
   session({
     secret: SESSION_SECRET,
@@ -56,6 +55,10 @@ app.use(
     },
   })
 );
+
+app.get('/favicon.ico', (req, res) => {
+  res.status(204).end();
+});
 
 let mongoClient;
 let botDb;
@@ -274,9 +277,25 @@ function assertGameApiConfigured() {
   }
 }
 
+function joinGameApiUrl(path) {
+  const base = String(DARK_CITY_API_BASE_URL || '').trim().replace(/\/$/, '');
+  let p = String(path || '').trim();
+  if (!p.startsWith('/')) p = `/${p}`;
+
+  // Allow either base URL form:
+  // - https://service.onrender.com
+  // - https://service.onrender.com/api
+  // while callers usually pass paths like /api/quiz/config
+  if (base.endsWith('/api') && p.startsWith('/api/')) {
+    p = p.slice('/api'.length);
+  }
+
+  return `${base}${p}`;
+}
+
 async function darkCityApiRequest(path, opts) {
   assertGameApiConfigured();
-  const url = `${DARK_CITY_API_BASE_URL}${path}`;
+  const url = joinGameApiUrl(path);
   const headers = {
     'Content-Type': 'application/json',
     'x-moderator-password': DARK_CITY_MODERATOR_PASSWORD,
@@ -291,9 +310,11 @@ async function darkCityApiRequest(path, opts) {
     json = null;
   }
   if (!res.ok) {
-    const msg = json?.error || json?.message || text || `HTTP ${res.status}`;
+    const preview = (text || '').slice(0, 300);
+    const msg = json?.error || json?.message || preview || `HTTP ${res.status}`;
     const err = new Error(msg);
     err.status = res.status;
+    err.url = url;
     throw err;
   }
   return json;
