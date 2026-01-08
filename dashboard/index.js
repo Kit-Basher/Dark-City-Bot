@@ -13,6 +13,7 @@ function nav(req) {
   if (!req.session?.user?.allowed) return '';
   return `<div style="display:flex; gap:12px; margin-bottom:14px; align-items:center;">
     <a href="/dashboard">Dashboard</a>
+    <a href="/quiz">Quiz</a>
     <a href="/settings">Settings</a>
     <a href="/xp">XP</a>
     <a href="/logs">Logs</a>
@@ -374,9 +375,41 @@ app.get('/auth/discord/callback', async (req, res) => {
 
 app.get('/dashboard', requireLogin, (req, res) => {
   const displayName = req.session?.user?.global_name || req.session?.user?.username || 'Moderator';
+  const error = typeof req.query?.error === 'string' ? req.query.error : '';
+  const ok = Boolean(DARK_CITY_API_BASE_URL && DARK_CITY_MODERATOR_PASSWORD);
+
+  res.send(
+    htmlPage(
+      'Dashboard',
+      `<div class="card">
+        ${nav(req)}
+        <div class="summaryRow">
+          <div>
+            <h1>Dashboard</h1>
+            <p class="muted" style="margin:6px 0 0 0;">Signed in as <strong>${displayName}</strong></p>
+          </div>
+          <div class="pill ${ok ? 'ok' : 'bad'}" title="Dashboard ↔ Game API configuration">
+            Game API: ${ok ? 'configured' : 'missing env'}
+          </div>
+        </div>
+
+        <div class="actionsRow" style="margin-top:14px;">
+          <a class="btn" href="/quiz">Quiz Editor</a>
+          <a class="btn" href="https://dark-city-map.onrender.com/?edit=1" target="_blank" rel="noopener">Open Map Editor</a>
+          <a class="btn secondary" href="/settings">Settings</a>
+          <a class="btn secondary" href="/xp">XP</a>
+          <a class="btn secondary" href="/logs">Logs</a>
+        </div>
+      </div>
+
+      ${(error ? `<div class="card notice error"><strong>Error:</strong> ${error}</div>` : '')}`
+    )
+  );
+});
+
+app.get('/quiz', requireLogin, (req, res) => {
   const saved = req.query?.saved === '1';
   const error = typeof req.query?.error === 'string' ? req.query.error : '';
-  const pwSaved = req.query?.pwSaved === '1';
   const ok = Boolean(DARK_CITY_API_BASE_URL && DARK_CITY_MODERATOR_PASSWORD);
 
   (async () => {
@@ -394,60 +427,22 @@ app.get('/dashboard', requireLogin, (req, res) => {
 
     res.send(
       htmlPage(
-        'Dashboard',
+        'Quiz',
         `<div class="card">
           ${nav(req)}
           <div class="summaryRow">
             <div>
-              <h1>Dashboard</h1>
-              <p class="muted" style="margin:6px 0 0 0;">Signed in as <strong>${displayName}</strong></p>
+              <h1>Quiz Editor</h1>
+              <p class="muted" style="margin:6px 0 0 0;">Edit and save the quiz configuration used by the game.</p>
             </div>
             <div class="pill ${ok ? 'ok' : 'bad'}" title="Dashboard ↔ Game API configuration">
               Game API: ${ok ? 'configured' : 'missing env'}
             </div>
           </div>
-
-          <div class="actionsRow" style="margin-top:14px;">
-            <a class="btn" href="https://dark-city-map.onrender.com/?edit=1" target="_blank" rel="noopener">Open Map Editor</a>
-            <a class="btn secondary" href="/settings">Settings</a>
-            <a class="btn secondary" href="/xp">XP</a>
-            <a class="btn secondary" href="/logs">Logs</a>
-          </div>
         </div>
 
-        ${(pwSaved ? '<div class="card notice ok"><strong>Password updated.</strong></div>' : '')}
         ${(saved ? '<div class="card notice ok"><strong>Quiz config saved.</strong></div>' : '')}
         ${(error ? `<div class="card notice error"><strong>Error:</strong> ${error}</div>` : '')}
-
-        <div class="card">
-          <details>
-            <summary>
-              <div class="summaryRow">
-                <h2 style="margin:0;">Moderator Password</h2>
-                <span class="muted">Show</span>
-              </div>
-              <p class="muted" style="margin:6px 0 0 0;">Updates the Game API password used by this dashboard (service-to-service).</p>
-            </summary>
-            <div style="margin-top:12px;">
-              <form method="POST" action="/dashboard/moderator-password" class="grid" style="max-width:520px;">
-                <div class="grid cols-2">
-                  <div>
-                    <label class="muted" for="newPassword">New moderator password</label>
-                    <input id="newPassword" name="newPassword" type="password" autocomplete="new-password" />
-                  </div>
-                  <div>
-                    <label class="muted" for="confirmPassword">Confirm new password</label>
-                    <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" />
-                  </div>
-                </div>
-                <div class="actionsRow">
-                  <button class="btn" type="submit" ${ok ? '' : 'disabled'}>Update Moderator Password</button>
-                  <span class="muted">Requires the current password to already be configured on this dashboard host.</span>
-                </div>
-              </form>
-            </div>
-          </details>
-        </div>
 
         <div class="card">
           <div class="summaryRow">
@@ -472,8 +467,8 @@ app.get('/dashboard', requireLogin, (req, res) => {
       )
     );
   })().catch((e) => {
-    console.error('Dashboard error:', e);
-    res.status(500).send('Dashboard error');
+    console.error('Quiz page error:', e);
+    res.status(500).send('Quiz page error');
   });
 });
 
@@ -511,10 +506,10 @@ app.post('/dashboard/moderator-password', requireLogin, async (req, res) => {
     }
 
     DARK_CITY_MODERATOR_PASSWORD = newPassword;
-    res.redirect('/dashboard?pwSaved=1');
+    res.redirect('/quiz?saved=1');
   } catch (error) {
     console.error('Moderator password update error:', error);
-    res.redirect('/dashboard?error=' + encodeURIComponent(error?.message || 'Password update failed'));
+    res.redirect('/quiz?error=' + encodeURIComponent(error?.message || 'Password update failed'));
   }
 });
 
@@ -543,10 +538,10 @@ app.post('/dashboard/quiz-config', requireLogin, async (req, res) => {
       body: JSON.stringify(parsed),
     });
 
-    res.redirect('/dashboard?saved=1');
+    res.redirect('/quiz?saved=1');
   } catch (error) {
     console.error('Quiz config save error:', error);
-    res.redirect('/dashboard?error=' + encodeURIComponent(error?.message || 'Save failed'));
+    res.redirect('/quiz?error=' + encodeURIComponent(error?.message || 'Save failed'));
   }
 });
 
