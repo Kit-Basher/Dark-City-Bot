@@ -27,7 +27,8 @@ const DISCORD_CLIENT_ID = requireEnv('DISCORD_CLIENT_ID');
 const DISCORD_CLIENT_SECRET = requireEnv('DISCORD_CLIENT_SECRET');
 const DISCORD_REDIRECT_URI = requireEnv('DISCORD_REDIRECT_URI');
 const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
-const DASHBOARD_ALLOWED_ROLE_ID = requireEnv('DASHBOARD_ALLOWED_ROLE_ID');
+const DASHBOARD_ALLOWED_ROLE_ID = process.env.DASHBOARD_ALLOWED_ROLE_ID;
+const ADMIN_ROLE_ID = String(process.env.ADMIN_ROLE_ID || DASHBOARD_ALLOWED_ROLE_ID || '').trim();
 const SESSION_SECRET = requireEnv('SESSION_SECRET');
 
 const DARK_CITY_API_BASE_URL = String(process.env.DARK_CITY_API_BASE_URL || '').trim().replace(/\/$/, '');
@@ -137,7 +138,7 @@ function requireLogin(req, res, next) {
       'Dark City Bot Dashboard',
       `<div class="card">
         <h1>Dark City Bot Dashboard</h1>
-        <p class="muted">You must sign in with Discord as a Moderator.</p>
+        <p class="muted">You must sign in with Discord as an Admin.</p>
         <p><a class="btn" href="/auth/discord">Sign in with Discord</a></p>
       </div>`
     )
@@ -318,7 +319,7 @@ app.get('/auth/discord/callback', async (req, res) => {
     });
 
     const roles = Array.isArray(member?.roles) ? member.roles : [];
-    const allowed = roles.includes(DASHBOARD_ALLOWED_ROLE_ID);
+    const allowed = Boolean(ADMIN_ROLE_ID && roles.includes(ADMIN_ROLE_ID));
 
     req.session.user = {
       id: user?.id,
@@ -335,7 +336,7 @@ app.get('/auth/discord/callback', async (req, res) => {
           `<div class="card">
             <h1>Access denied</h1>
             <p class="muted">Your Discord account is not allowed to access this dashboard.</p>
-            <p class="muted">Required role id: <code>${DASHBOARD_ALLOWED_ROLE_ID}</code></p>
+            <p class="muted">Required role id: <code>${ADMIN_ROLE_ID}</code></p>
             <p><a href="/logout">Log out</a></p>
           </div>`
         )
