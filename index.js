@@ -840,13 +840,6 @@ async function main() {
 
   client.once('clientReady', () => {
     console.log(`🤖 Logged in as ${client.user.tag}`);
-    console.log('🔧 Build:', {
-      BUILD_STAMP,
-      renderCommit: process.env.RENDER_GIT_COMMIT,
-      aspectsChannelId: ASPECTS_CHANNEL_ID,
-      aspectsRoleCreatesPerRun: process.env.ASPECTS_ROLE_CREATES_PER_RUN || '25',
-      aspectsRoleCreateDelayMs: process.env.ASPECTS_ROLE_CREATE_DELAY_MS || '350',
-    });
     logEvent('info', 'bot_ready', 'Bot logged in', {
       userTag: client.user.tag,
       rCooldownUserMs,
