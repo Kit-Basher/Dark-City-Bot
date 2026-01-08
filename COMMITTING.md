@@ -30,6 +30,7 @@ Do **not** commit here if you changed:
 
 ## Push checklist
 
+- Run `./dc-preflight.sh` to confirm repo/branch/remote.
 - Make sure you’re inside the `dark-city-bot/` repo (look for `dark-city-bot/.git/`).
 - Confirm required env vars are set in your deployment:
   - `DISCORD_BOT_TOKEN`
