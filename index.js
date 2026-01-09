@@ -159,11 +159,43 @@ async function getLatestHealthDoc(service) {
   }
 }
 
+async function getRecentHealthDocs(service, limit) {
+  try {
+    if (!botDb) return [];
+    const n = Math.max(1, Math.min(200, Number.isFinite(limit) ? limit : 20));
+    return await botDb
+      .collection('service_health_checks')
+      .find({ guildId: DISCORD_GUILD_ID, service: String(service) })
+      .sort({ checkedAt: -1 })
+      .limit(n)
+      .toArray();
+  } catch {
+    return [];
+  }
+}
+
+function computeErrorRate(rows) {
+  if (!rows || rows.length === 0) return null;
+  const failed = rows.filter((r) => r && r.ok === false).length;
+  return failed / rows.length;
+}
+
 function stripTrailingApi(baseUrl) {
   return String(baseUrl || '')
     .trim()
     .replace(/\/$/, '')
     .replace(/\/api$/, '');
+}
+
+function getConfiguredUrls() {
+  const defaultApiBase = 'https://dark-city-3-0-reborn.onrender.com/api';
+  const defaultMapBase = 'https://dark-city-map.onrender.com';
+  const defaultDashBase = 'https://dark-city-bot-vd6t.onrender.com';
+
+  const apiBase = stripTrailingApi(process.env.DARK_CITY_API_BASE_URL || defaultApiBase);
+  const mapBase = String(process.env.DARK_CITY_MAP_BASE_URL || defaultMapBase).trim().replace(/\/$/, '');
+  const dashBase = String(process.env.DARK_CITY_DASHBOARD_BASE_URL || defaultDashBase).trim().replace(/\/$/, '');
+  return { apiBase, mapBase, dashBase };
 }
 
 function formatAgo(ms) {
@@ -375,6 +407,10 @@ const statusReportCommand = new SlashCommandBuilder()
   .setName('statusreport')
   .setDescription('Brief status report for game/map/dashboard/bot');
 
+const fullReportCommand = new SlashCommandBuilder()
+  .setName('fullreport')
+  .setDescription('Expanded report for game/map/dashboard/bot');
+
 const cardCommand = new SlashCommandBuilder()
   .setName('card')
   .setDescription('Show your linked character card (level/xp)');
@@ -403,6 +439,7 @@ async function registerCommands() {
       rollCommand.toJSON(),
       uokCommand.toJSON(),
       statusReportCommand.toJSON(),
+      fullReportCommand.toJSON(),
       purgeCommand.toJSON(),
       timeoutCommand.toJSON(),
       untimeoutCommand.toJSON(),
@@ -961,9 +998,7 @@ async function main() {
       if (interaction.commandName === 'statusreport') {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-        const apiBase = stripTrailingApi(process.env.DARK_CITY_API_BASE_URL);
-        const mapBase = String(process.env.DARK_CITY_MAP_BASE_URL || '').trim().replace(/\/$/, '');
-        const dashBase = String(process.env.DARK_CITY_DASHBOARD_BASE_URL || '').trim().replace(/\/$/, '');
+        const { apiBase, mapBase, dashBase } = getConfiguredUrls();
 
         const targets = [
           { label: 'Game', service: 'game', url: apiBase ? `${apiBase}/status-ping` : null },
@@ -1010,6 +1045,73 @@ async function main() {
         lines.push(`- **Bot service**: uptime ${uptimeSec}s | ws ping ${wsPingPart} | heartbeat ${hbPart}`);
 
         await interaction.editReply(lines.join('\n'));
+        return;
+      }
+
+      if (interaction.commandName === 'fullreport') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+        const { apiBase, mapBase, dashBase } = getConfiguredUrls();
+
+        const liveTargets = [
+          { label: 'Game', service: 'game', url: apiBase ? `${apiBase}/status-ping` : null, kind: 'status-ping' },
+          { label: 'Map', service: 'map', url: mapBase ? `${mapBase}/` : null, kind: 'root' },
+          { label: 'Dashboard', service: 'dashboard', url: dashBase ? `${dashBase}/health` : null, kind: 'health' },
+        ];
+
+        const lines = [];
+        lines.push('**Dark City Full Report**');
+
+        for (const t of liveTargets) {
+          if (!t.url) {
+            lines.push(`- **${t.label}**: missing URL`);
+            continue;
+          }
+
+          const [live, last, recent] = await Promise.all([
+            pingUrl(t.url, 6000),
+            getLatestHealthDoc(t.service),
+            getRecentHealthDocs(t.service, 20),
+          ]);
+
+          const rate = computeErrorRate(recent);
+          const ratePart = rate === null ? 'n/a' : `${Math.round(rate * 100)}% (${recent.length})`;
+
+          const lastOk = last ? (last.ok ? 'OK' : 'FAIL') : 'n/a';
+          const lastAge = last?.checkedAt ? formatAgo(Date.now() - new Date(last.checkedAt).getTime()) : 'n/a';
+          const lastMeta = last
+            ? `${lastOk} ${lastAge} ago` +
+              `${last.ok ? '' : ` | last=${last.status || 0}${last.error ? ` (${last.error})` : ''}`}`
+            : 'n/a';
+
+          const liveMeta = live.ok
+            ? `OK (${live.status}) ${live.ms}ms`
+            : `FAIL (${live.status || 0}${live.error ? ` ${live.error}` : ''}) ${live.ms}ms`;
+
+          lines.push(
+            `- **${t.label}**: live ${liveMeta} | last ${lastMeta} | err ${ratePart}`
+          );
+        }
+
+        // Bot service (this process)
+        const uptimeSec = Math.floor(process.uptime());
+        const wsPingMs = Number.isFinite(client.ws?.ping) ? Math.round(client.ws.ping) : null;
+        const wsPingPart = wsPingMs === null ? 'n/a' : `${wsPingMs}ms`;
+
+        let hbAge = null;
+        let hbExtra = '';
+        if (botDb) {
+          const hb = await botDb.collection('bot_heartbeats').findOne({ guildId: DISCORD_GUILD_ID, service: 'bot' });
+          if (hb?.lastSeenAt) hbAge = Date.now() - new Date(hb.lastSeenAt).getTime();
+          if (hb?.serviceId) hbExtra += ` | serviceId ${hb.serviceId}`;
+          if (hb?.instanceId) hbExtra += ` | instance ${hb.instanceId}`;
+        }
+        const hbPart = hbAge === null ? 'n/a' : `${formatAgo(hbAge)} ago`;
+        lines.push(`- **Bot service**: uptime ${uptimeSec}s | ws ping ${wsPingPart} | heartbeat ${hbPart}${hbExtra}`);
+
+        // Keep under Discord limits
+        const out = lines.join('\n').slice(0, 1900);
+        await interaction.editReply(out);
         return;
       }
 
