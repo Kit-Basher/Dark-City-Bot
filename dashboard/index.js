@@ -30,7 +30,7 @@ const DISCORD_REDIRECT_URI = requireEnv('DISCORD_REDIRECT_URI');
 const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
 const DASHBOARD_ALLOWED_ROLE_ID = process.env.DASHBOARD_ALLOWED_ROLE_ID;
 const ADMIN_ROLE_ID = String(process.env.ADMIN_ROLE_ID || DASHBOARD_ALLOWED_ROLE_ID || '').trim();
-const DISCORD_CALLBACK_URL = requireEnv('DISCORD_CALLBACK_URL');
+const DISCORD_CALLBACK_URL = String(process.env.DISCORD_CALLBACK_URL || DISCORD_REDIRECT_URI || '').trim();
 const SESSION_SECRET = requireEnv('SESSION_SECRET');
 
 const DARK_CITY_API_BASE_URL = String(process.env.DARK_CITY_API_BASE_URL || '').trim().replace(/\/$/, '');
