@@ -351,9 +351,9 @@ const rollCommand = new SlashCommandBuilder()
   .setName('r')
   .setDescription('Roll 2d6');
 
-const rplusCommand = new SlashCommandBuilder()
-  .setName('rplus')
-  .setDescription('Roll 2d6 with skill bonus')
+const rskillCommand = new SlashCommandBuilder()
+  .setName('rskill')
+  .setDescription('Roll 2d6 with character skill bonus')
   .addStringOption((opt) =>
     opt
       .setName('skill')
@@ -485,7 +485,7 @@ async function registerCommands() {
   await rest.put(Routes.applicationGuildCommands(DISCORD_APPLICATION_ID, DISCORD_GUILD_ID), {
     body: [
       rollCommand.toJSON(),
-      rplusCommand.toJSON(),
+      rskillCommand.toJSON(),
       startCommand.toJSON(),
       endCommand.toJSON(),
       uokCommand.toJSON(),
@@ -1568,7 +1568,7 @@ async function main() {
         return;
       }
 
-      if (interaction.commandName === 'rplus') {
+      if (interaction.commandName === 'rskill') {
         const now = Date.now();
         const userId = interaction.user?.id;
         const channelId = interaction.channelId;
@@ -1618,8 +1618,10 @@ async function main() {
               if (skill) {
                 skillBonus = skill.level || 0;
               }
+              // If no skill found, skillBonus remains 0
             }
           }
+          // If no character found, skillBonus remains 0
 
           const { d1, d2, total } = roll2d6();
           const finalTotal = total + skillBonus;
@@ -1631,15 +1633,18 @@ async function main() {
             if (characterName) {
               response += `\n*Roll for ${characterName}*`;
             }
-          } else if (characterName) {
-            response += `\n*Roll for ${characterName} (no ${skillName} skill found)*`;
           } else {
-            response += `\n*No character linked or ${skillName} skill not found*`;
+            response += ` + ${skillName} (+0) = **${finalTotal}**`;
+            if (characterName) {
+              response += `\n*Roll for ${characterName} (no ${skillName} skill bonus)*`;
+            } else {
+              response += `\n*No character linked (no skill bonus)*`;
+            }
           }
 
           await interaction.reply(response);
 
-          logEvent('info', 'roll_2d6_plus', 'Rolled 2d6 with skill bonus', {
+          logEvent('info', 'roll_2d6_skill', 'Rolled 2d6 with character skill bonus', {
             userId,
             channelId,
             skillName,
@@ -1651,13 +1656,13 @@ async function main() {
             finalTotal,
           });
         } catch (error) {
-          console.error('Error fetching character for r+ command:', error);
+          console.error('Error fetching character for rskill command:', error);
           
-          // Fallback to normal roll if API fails
+          // Fallback to normal roll with 0 bonus if API fails
           const { d1, d2, total } = roll2d6();
-          await interaction.reply(`🎲 2d6: ${d1} + ${d2} = **${total}**\n*Could not fetch character data*`);
+          await interaction.reply(`🎲 2d6: ${d1} + ${d2} = **${total}** + ${skillName} (+0) = **${total}**\n*Could not fetch character data (no skill bonus)*`);
 
-          logEvent('error', 'roll_2d6_plus_error', 'Error in r+ command', {
+          logEvent('error', 'roll_2d6_skill_error', 'Error in rskill command', {
             userId,
             channelId,
             skillName,
