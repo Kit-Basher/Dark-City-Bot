@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
 const { MongoClient } = require('mongodb');
+const MongoStore = require('connect-mongo');
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -63,6 +64,13 @@ app.use(
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
+    store: MONGODB_URI
+      ? MongoStore.create({
+          mongoUrl: MONGODB_URI,
+          collectionName: 'dashboard_sessions',
+          ttl: 60 * 60 * 24 * 30,
+        })
+      : undefined,
     cookie: {
       httpOnly: true,
       sameSite: 'lax',
@@ -1266,13 +1274,13 @@ app.get('/logs', requireLogin, async (req, res) => {
         const ts = l.createdAt ? new Date(l.createdAt).toISOString() : '';
         const meta = l.meta ? JSON.stringify(l.meta) : '';
         return `<tr>
-          <td style="white-space:nowrap; padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${ts}</td>
-          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.service || ''}</td>
-          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.level || ''}</td>
-          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.category || ''}</td>
-          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.event || ''}</td>
-          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.message || ''}</td>
-          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08); max-width:320px; overflow:hidden; text-overflow:ellipsis;">${meta}</td>
+          <td style="white-space:nowrap; padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${escapeHtml(ts)}</td>
+          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${escapeHtml(l.service || '')}</td>
+          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${escapeHtml(l.level || '')}</td>
+          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${escapeHtml(l.category || '')}</td>
+          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${escapeHtml(l.event || '')}</td>
+          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${escapeHtml(l.message || '')}</td>
+          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08); max-width:320px; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(meta)}</td>
         </tr>`;
       })
       .join('');

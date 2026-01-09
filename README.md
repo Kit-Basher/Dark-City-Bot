@@ -23,9 +23,15 @@ This is a **separate Git repo** from the rest of the Dark City workspace.
 
 - Node `22.x` (see `package.json`)
 
+If you use `nvm`, this repo includes:
+
+- `.nvmrc`
+- `.node-version`
+
 ## Run locally
 
 ```bash
+nvm use 22 || true
 npm install
 cp .env.example .env
 export DISCORD_BOT_TOKEN="..."
@@ -46,7 +52,7 @@ Optional:
 
 - `MODERATOR_ROLE_ID` (or `DASHBOARD_ALLOWED_ROLE_ID`)
 - `ASPECTS_CHANNEL_ID`
-- `MONGODB_URI` (enables persisted settings/logs)
+- `MONGODB_URI` (enables persisted settings/logs; dashboard sessions are also stored in MongoDB when set)
 - `BOT_DB_NAME` (default: `dark_city_bot`)
 
 Optional integration with the game server:

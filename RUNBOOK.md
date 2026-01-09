@@ -10,6 +10,10 @@ This repo backs two Render services:
 - **Provider**: Render
 - **Deploy trigger**: Render auto-deploy from GitHub on push to `main` (typical)
 
+Node version:
+
+- `dark-city-bot` expects Node `22.x` (see `package.json`)
+
 ## Service 1: Bot (`index.js`)
 
 ### Start command
@@ -59,6 +63,8 @@ Optional integration with game server:
 Optional:
 
 - `MONGODB_URI` / `BOT_DB_NAME` (enables Settings/Logs pages)
+
+If `MONGODB_URI` is set, the dashboard also stores login sessions in MongoDB.
 
 Optional integration with game server:
 
