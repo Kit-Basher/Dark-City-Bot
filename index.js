@@ -180,6 +180,24 @@ function computeErrorRate(rows) {
   return failed / rows.length;
 }
 
+function computeFailStreak(rows) {
+  if (!rows || rows.length === 0) return 0;
+  let streak = 0;
+  for (const r of rows) {
+    if (r && r.ok === false) streak += 1;
+    else break;
+  }
+  return streak;
+}
+
+function findMostRecentFailure(rows) {
+  if (!rows || rows.length === 0) return null;
+  for (const r of rows) {
+    if (r && r.ok === false) return r;
+  }
+  return null;
+}
+
 function stripTrailingApi(baseUrl) {
   return String(baseUrl || '')
     .trim()
@@ -1076,6 +1094,12 @@ async function main() {
 
           const rate = computeErrorRate(recent);
           const ratePart = rate === null ? 'n/a' : `${Math.round(rate * 100)}% (${recent.length})`;
+          const streak = computeFailStreak(recent);
+          const fail = findMostRecentFailure(recent);
+          const failAge = fail?.checkedAt ? formatAgo(Date.now() - new Date(fail.checkedAt).getTime()) : null;
+          const failPart = fail
+            ? ` | lastFail ${failAge} ago (${fail.status || 0}${fail.error ? ` ${fail.error}` : ''})`
+            : '';
 
           const lastOk = last ? (last.ok ? 'OK' : 'FAIL') : 'n/a';
           const lastAge = last?.checkedAt ? formatAgo(Date.now() - new Date(last.checkedAt).getTime()) : 'n/a';
@@ -1089,7 +1113,7 @@ async function main() {
             : `FAIL (${live.status || 0}${live.error ? ` ${live.error}` : ''}) ${live.ms}ms`;
 
           lines.push(
-            `- **${t.label}**: live ${liveMeta} | last ${lastMeta} | err ${ratePart}`
+            `- **${t.label}**: live ${liveMeta} | last ${lastMeta} | err ${ratePart} | streak ${streak}${failPart}`
           );
         }
 
