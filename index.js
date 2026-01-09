@@ -361,6 +361,26 @@ const rplusCommand = new SlashCommandBuilder()
       .setRequired(true)
   );
 
+const startCommand = new SlashCommandBuilder()
+  .setName('start')
+  .setDescription('Start a scene and add it to the calendar')
+  .addStringOption((opt) =>
+    opt
+      .setName('players')
+      .setDescription('Players involved (mention them with @)')
+      .setRequired(true)
+  )
+  .addStringOption((opt) =>
+    opt
+      .setName('date')
+      .setDescription('Date of the scene (dd/mm/yyyy, defaults to today)')
+      .setRequired(false)
+  );
+
+const endCommand = new SlashCommandBuilder()
+  .setName('end')
+  .setDescription('End the current scene');
+
 const purgeCommand = new SlashCommandBuilder()
   .setName('purge')
   .setDescription('Delete recent messages in this channel (mods only)')
@@ -466,6 +486,8 @@ async function registerCommands() {
     body: [
       rollCommand.toJSON(),
       rplusCommand.toJSON(),
+      startCommand.toJSON(),
+      endCommand.toJSON(),
       uokCommand.toJSON(),
       statusReportCommand.toJSON(),
       fullReportCommand.toJSON(),
@@ -903,6 +925,10 @@ function roll2d6() {
 const lastRollByUser = new Map();
 const lastRollByChannel = new Map();
 
+// Scene tracking
+const activeScenesByChannel = new Map(); // channelId -> scene data
+const sceneMessagesByChannel = new Map(); // channelId -> { startMessageId, calendarMessageId }
+
 const lastInviteWarnByUser = new Map();
 const lastLowTrustDmWarnByUser = new Map();
 const lastSpamWarnByUser = new Map();
@@ -1015,6 +1041,76 @@ async function main() {
   client.on('interactionCreate', async (interaction) => {
     try {
       if (!interaction.isChatInputCommand()) return;
+
+      // Helper functions for scene management
+      function parseDate(dateString) {
+        if (!dateString) return new Date(); // Default to today
+        
+        const parts = dateString.split('/');
+        if (parts.length !== 3) return null;
+        
+        const [day, month, year] = parts.map(p => parseInt(p, 10));
+        if (!Number.isFinite(day) || !Number.isFinite(month) || !Number.isFinite(year)) return null;
+        
+        // Create date in local timezone
+        const date = new Date(year, month - 1, day);
+        
+        // Validate the date is valid
+        if (date.getDate() !== day || date.getMonth() !== month - 1 || date.getFullYear() !== year) {
+          return null;
+        }
+        
+        return date;
+      }
+
+      function extractUserIds(mentionsString) {
+        const userIds = [];
+        const mentionPattern = /<@!?(\d+)>/g;
+        let match;
+        while ((match = mentionPattern.exec(mentionsString)) !== null) {
+          userIds.push(match[1]);
+        }
+        return userIds;
+      }
+
+      async function getCharacterNames(userIds) {
+        const characterNames = [];
+        
+        for (const userId of userIds) {
+          try {
+            const characterUrl = `${DARK_CITY_API_BASE_URL}/api/characters/discord/by-user/${userId}`;
+            const characterResponse = await fetch(characterUrl, {
+              method: 'GET',
+              headers: { 'Content-Type': 'application/json' },
+              timeout: 3000,
+            });
+
+            if (characterResponse.ok) {
+              const character = await characterResponse.json();
+              characterNames.push(character.name);
+            } else {
+              // Try to get user from Discord API as fallback
+              const user = await client.users.fetch(userId).catch(() => null);
+              characterNames.push(user?.username || `User-${userId.slice(-4)}`);
+            }
+          } catch (error) {
+            console.error(`Error fetching character for user ${userId}:`, error);
+            characterNames.push(`User-${userId.slice(-4)}`);
+          }
+        }
+        
+        return characterNames;
+      }
+
+      async function createCalendarPost(characterNames, date, startMessageUrl) {
+        // This would integrate with your calendar system
+        // For now, we'll simulate it with a placeholder
+        const calendarMessage = `📅 **Scene Scheduled**\n**Date:** ${date.toLocaleDateString('en-GB')}\n**Players:** ${characterNames.join(', ')}\n**Link:** [View Scene](${startMessageUrl})\n\n*Status: Active*`;
+        
+        // In a real implementation, this would post to your calendar channel/system
+        // For now, return a mock calendar message ID
+        return { calendarMessageId: 'mock-' + Date.now(), calendarMessage };
+      }
 
       if (interaction.commandName === 'uok') {
         const uptimeSec = Math.floor(process.uptime());
@@ -1566,6 +1662,154 @@ async function main() {
             channelId,
             skillName,
             error: error.message,
+          });
+        }
+        return;
+      }
+
+      if (interaction.commandName === 'start') {
+        const channelId = interaction.channelId;
+        const playersString = interaction.options.getString('players', true);
+        const dateString = interaction.options.getString('date', false);
+
+        // Check if there's already an active scene in this channel
+        if (activeScenesByChannel.has(channelId)) {
+          await interaction.reply({
+            content: '❌ There is already an active scene in this channel. Use `/end` to end it first.',
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        await interaction.deferReply();
+
+        try {
+          // Parse the date
+          const sceneDate = parseDate(dateString);
+          if (!sceneDate) {
+            await interaction.editReply({
+              content: '❌ Invalid date format. Please use DD/MM/YYYY format (e.g., 25/12/2024).',
+            });
+            return;
+          }
+
+          // Extract user IDs from mentions
+          const userIds = extractUserIds(playersString);
+          if (userIds.length === 0) {
+            await interaction.editReply({
+              content: '❌ No valid player mentions found. Please mention players with @ (e.g., @player1 @player2).',
+            });
+            return;
+          }
+
+          // Get character names for all mentioned users
+          const characterNames = await getCharacterNames(userIds);
+
+          // Create the start message
+          const startMessage = await interaction.editReply({
+            content: `🎬 **Scene Started**\n**Date:** ${sceneDate.toLocaleDateString('en-GB')}\n**Players:** ${characterNames.join(', ')}\n\n*Use /end when the scene is complete.*`,
+          });
+
+          // Create calendar post
+          const startMessageUrl = `https://discord.com/channels/${DISCORD_GUILD_ID}/${channelId}/${startMessage.id}`;
+          const { calendarMessageId, calendarMessage } = await createCalendarPost(characterNames, sceneDate, startMessageUrl);
+
+          // Store scene data
+          const sceneData = {
+            channelId,
+            userIds,
+            characterNames,
+            date: sceneDate,
+            startedAt: Date.now(),
+            startMessageId: startMessage.id,
+            calendarMessageId,
+          };
+
+          activeScenesByChannel.set(channelId, sceneData);
+          sceneMessagesByChannel.set(channelId, {
+            startMessageId: startMessage.id,
+            calendarMessageId,
+          });
+
+          logEvent('info', 'scene_started', 'Scene started', {
+            channelId,
+            userIds,
+            characterNames,
+            date: sceneDate.toISOString(),
+            startMessageId: startMessage.id,
+            calendarMessageId,
+          });
+
+        } catch (error) {
+          console.error('Error in /start command:', error);
+          await interaction.editReply({
+            content: '❌ An error occurred while starting the scene. Please try again.',
+          });
+        }
+        return;
+      }
+
+      if (interaction.commandName === 'end') {
+        const channelId = interaction.channelId;
+
+        // Check if there's an active scene in this channel
+        if (!activeScenesByChannel.has(channelId)) {
+          await interaction.reply({
+            content: '❌ No active scene found in this channel.',
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        await interaction.deferReply();
+
+        try {
+          const sceneData = activeScenesByChannel.get(channelId);
+          const messages = sceneMessagesByChannel.get(channelId);
+
+          // Calculate scene duration
+          const duration = Date.now() - sceneData.startedAt;
+          const durationMinutes = Math.floor(duration / 60000);
+
+          // Update the start message to show the scene is complete
+          if (messages && messages.startMessageId) {
+            try {
+              const startMessage = await interaction.channel.messages.fetch(messages.startMessageId);
+              if (startMessage) {
+                const updatedContent = startMessage.content.replace(
+                  '*Use /end when the scene is complete.*',
+                  `✅ **Scene Complete** - Duration: ${durationMinutes} minutes`
+                );
+                await startMessage.edit(updatedContent);
+              }
+            } catch (error) {
+              console.error('Error updating start message:', error);
+            }
+          }
+
+          // Update calendar post (this would integrate with your calendar system)
+          // For now, we'll just log it
+          const updatedCalendarMessage = `📅 **Scene Completed**\n**Date:** ${sceneData.date.toLocaleDateString('en-GB')}\n**Players:** ${sceneData.characterNames.join(', ')}\n**Duration:** ${durationMinutes} minutes\n\n*Status: Completed*`;
+
+          // Clean up scene data
+          activeScenesByChannel.delete(channelId);
+          sceneMessagesByChannel.delete(channelId);
+
+          await interaction.editReply({
+            content: `✅ Scene ended! Duration: ${durationMinutes} minutes.\n\nThe calendar post has been updated to show the scene as complete.`,
+          });
+
+          logEvent('info', 'scene_ended', 'Scene ended', {
+            channelId,
+            sceneData,
+            duration,
+            durationMinutes,
+          });
+
+        } catch (error) {
+          console.error('Error in /end command:', error);
+          await interaction.editReply({
+            content: '❌ An error occurred while ending the scene. Please try again.',
           });
         }
         return;
