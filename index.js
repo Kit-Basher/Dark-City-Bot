@@ -71,6 +71,9 @@ let xpMinMessageChars = 20;
 /** @type {string[]} */
 let xpAllowedChannelIds = [];
 
+const BOT_HEARTBEAT_ENABLED = String(process.env.BOT_HEARTBEAT_ENABLED || 'true').trim().toLowerCase() !== 'false';
+const BOT_HEARTBEAT_INTERVAL_SECONDS = parseInt(process.env.BOT_HEARTBEAT_INTERVAL_SECONDS || '30', 10);
+
 const MONGODB_URI = process.env.MONGODB_URI;
 let mongoClient;
 let botDb;
@@ -85,6 +88,47 @@ async function initMongo() {
   await mongoClient.connect();
   botDb = mongoClient.db(process.env.BOT_DB_NAME || 'dark_city_bot');
   console.log('✅ Mongo: Connected');
+
+  try {
+    await botDb.collection('bot_heartbeats').createIndex({ guildId: 1, service: 1 }, { unique: true });
+  } catch (e) {
+    console.error('Mongo bot_heartbeats index failed:', e?.message || e);
+  }
+}
+
+async function writeHeartbeat() {
+  try {
+    if (!botDb) return;
+    const now = new Date();
+    const instanceId = String(process.env.RENDER_INSTANCE_ID || process.env.HOSTNAME || '').trim() || null;
+    const serviceId = String(process.env.RENDER_SERVICE_ID || '').trim() || null;
+    await botDb.collection('bot_heartbeats').updateOne(
+      { guildId: DISCORD_GUILD_ID, service: 'bot' },
+      {
+        $set: {
+          guildId: DISCORD_GUILD_ID,
+          service: 'bot',
+          lastSeenAt: now,
+          updatedAt: now,
+          instanceId,
+          serviceId,
+        },
+      },
+      { upsert: true }
+    );
+  } catch (e) {
+    console.error('Mongo heartbeat write failed:', e?.message || e);
+  }
+}
+
+function startHeartbeatLoop() {
+  if (!BOT_HEARTBEAT_ENABLED) return;
+  if (!botDb) return;
+  const intervalMs = Math.max(10, Number.isFinite(BOT_HEARTBEAT_INTERVAL_SECONDS) ? BOT_HEARTBEAT_INTERVAL_SECONDS : 30) * 1000;
+  void writeHeartbeat();
+  setInterval(() => {
+    void writeHeartbeat();
+  }, intervalMs);
 }
 
 async function loadSettings() {
@@ -818,6 +862,8 @@ async function main() {
   await initMongo();
   await ensureSettingsDoc();
   await loadSettings();
+
+  startHeartbeatLoop();
 
   if (botDb) {
     setInterval(() => {

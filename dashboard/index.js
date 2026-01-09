@@ -46,6 +46,9 @@ const SERVICE_HEALTHCHECK_ERROR_WINDOW = parseInt(process.env.SERVICE_HEALTHCHEC
 const SERVICE_HEALTHCHECK_ERROR_RATE_THRESHOLD = parseFloat(process.env.SERVICE_HEALTHCHECK_ERROR_RATE_THRESHOLD || '0.5');
 const SERVICE_HEALTHCHECK_ERROR_ALERT_COOLDOWN_MINUTES = parseInt(process.env.SERVICE_HEALTHCHECK_ERROR_ALERT_COOLDOWN_MINUTES || '30', 10);
 
+const BOT_HEARTBEAT_ENABLED = String(process.env.BOT_HEARTBEAT_ENABLED || 'true').trim().toLowerCase() !== 'false';
+const BOT_HEARTBEAT_STALE_SECONDS = parseInt(process.env.BOT_HEARTBEAT_STALE_SECONDS || '120', 10);
+
 const MONGODB_URI = process.env.MONGODB_URI;
 const BOT_DB_NAME = process.env.BOT_DB_NAME || 'dark_city_bot';
 
@@ -154,6 +157,17 @@ async function initMongo() {
   } catch (e) {
     console.error('Mongo service health TTL/index failed:', e);
   }
+
+  try {
+    await botDb.collection('bot_heartbeats').createIndex({ guildId: 1, service: 1 }, { unique: true });
+  } catch (e) {
+    console.error('Mongo bot_heartbeats index failed:', e);
+  }
+}
+
+async function getBotHeartbeat() {
+  if (!botDb) return null;
+  return botDb.collection('bot_heartbeats').findOne({ guildId: DISCORD_GUILD_ID, service: 'bot' });
 }
 
 function parseHealthcheckTargets() {
@@ -263,6 +277,7 @@ function startServiceHealthMonitor() {
 
   const lastOkByService = new Map();
   const lastErrorRateAlertAtByService = new Map();
+  let botHeartbeatWasOk = null;
   const intervalMs = Math.max(15, Number.isFinite(SERVICE_HEALTHCHECK_INTERVAL_SECONDS) ? SERVICE_HEALTHCHECK_INTERVAL_SECONDS : 60) * 1000;
 
   async function tick() {
@@ -309,6 +324,28 @@ function startServiceHealthMonitor() {
             );
           }
         }
+      }
+    }
+
+    if (BOT_HEARTBEAT_ENABLED) {
+      try {
+        const hb = await getBotHeartbeat();
+        const lastSeenAt = hb && hb.lastSeenAt ? new Date(hb.lastSeenAt) : null;
+        const ageMs = lastSeenAt ? (Date.now() - lastSeenAt.getTime()) : Number.POSITIVE_INFINITY;
+        const staleMs = Math.max(10, Number.isFinite(BOT_HEARTBEAT_STALE_SECONDS) ? BOT_HEARTBEAT_STALE_SECONDS : 120) * 1000;
+        const ok = ageMs <= staleMs;
+
+        if (botHeartbeatWasOk === null) {
+          botHeartbeatWasOk = ok;
+        } else if (botHeartbeatWasOk !== ok) {
+          botHeartbeatWasOk = ok;
+          const msg = ok
+            ? '✅ Background bot recovered (heartbeat resumed)'
+            : `🚨 Background bot DOWN (no heartbeat for ${Math.round(ageMs / 1000)}s)`;
+          await postDiscordWebhook(msg);
+        }
+      } catch (e) {
+        console.error('Heartbeat monitor failed:', e?.message || e);
       }
     }
   }
