@@ -159,6 +159,13 @@ async function getLatestHealthDoc(service) {
   }
 }
 
+function stripTrailingApi(baseUrl) {
+  return String(baseUrl || '')
+    .trim()
+    .replace(/\/$/, '')
+    .replace(/\/api$/, '');
+}
+
 function formatAgo(ms) {
   if (!Number.isFinite(ms) || ms < 0) return '?';
   const s = Math.round(ms / 1000);
@@ -954,13 +961,13 @@ async function main() {
       if (interaction.commandName === 'statusreport') {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-        const apiBase = String(process.env.DARK_CITY_API_BASE_URL || '').trim().replace(/\/$/, '');
+        const apiBase = stripTrailingApi(process.env.DARK_CITY_API_BASE_URL);
         const mapBase = String(process.env.DARK_CITY_MAP_BASE_URL || '').trim().replace(/\/$/, '');
         const dashBase = String(process.env.DARK_CITY_DASHBOARD_BASE_URL || '').trim().replace(/\/$/, '');
 
         const targets = [
           { label: 'Game', service: 'game', url: apiBase ? `${apiBase}/status-ping` : null },
-          { label: 'Map', service: 'map', url: mapBase ? `${mapBase}/status-ping` : null },
+          { label: 'Map', service: 'map', url: mapBase ? `${mapBase}/` : null },
           { label: 'Dashboard', service: 'dashboard', url: dashBase ? `${dashBase}/health` : null },
         ];
 

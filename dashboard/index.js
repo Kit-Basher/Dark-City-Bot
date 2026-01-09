@@ -170,6 +170,13 @@ async function getBotHeartbeat() {
   return botDb.collection('bot_heartbeats').findOne({ guildId: DISCORD_GUILD_ID, service: 'bot' });
 }
 
+function stripTrailingApi(baseUrl) {
+  return String(baseUrl || '')
+    .trim()
+    .replace(/\/$/, '')
+    .replace(/\/api$/, '');
+}
+
 function parseHealthcheckTargets() {
   const raw = String(process.env.SERVICE_HEALTHCHECK_TARGETS || '').trim();
   if (raw) {
@@ -197,10 +204,11 @@ function parseHealthcheckTargets() {
 
   const targets = [];
   if (DARK_CITY_API_BASE_URL) {
-    targets.push({ service: 'game', url: `${DARK_CITY_API_BASE_URL.replace(/\/$/, '')}/status-ping`, expectStatus: 200 });
+    const root = stripTrailingApi(DARK_CITY_API_BASE_URL);
+    targets.push({ service: 'game', url: `${root}/status-ping`, expectStatus: 200 });
   }
   const mapBase = String(process.env.DARK_CITY_MAP_BASE_URL || '').trim().replace(/\/$/, '');
-  if (mapBase) targets.push({ service: 'map', url: `${mapBase}/status-ping`, expectStatus: 200 });
+  if (mapBase) targets.push({ service: 'map', url: `${mapBase}/`, expectStatus: 200 });
   const moderatorBase = String(process.env.DARK_CITY_MODERATOR_BASE_URL || '').trim().replace(/\/$/, '');
   if (moderatorBase) targets.push({ service: 'moderator', url: `${moderatorBase}/health`, expectStatus: 200 });
   const dashboardBase = String(process.env.DARK_CITY_DASHBOARD_BASE_URL || '').trim().replace(/\/$/, '');
