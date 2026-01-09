@@ -322,6 +322,10 @@ const aspectsCleanupPrefixedCommand = new SlashCommandBuilder()
   .setName('aspects_cleanup_prefixed')
   .setDescription('Delete unused legacy Aspect: roles (memberCount=0). Use before reposting without prefix (mods only)');
 
+const uokCommand = new SlashCommandBuilder()
+  .setName('uok')
+  .setDescription('Quick bot liveness check');
+
 const cardCommand = new SlashCommandBuilder()
   .setName('card')
   .setDescription('Show your linked character card (level/xp)');
@@ -348,6 +352,7 @@ async function registerCommands() {
   await rest.put(Routes.applicationGuildCommands(DISCORD_APPLICATION_ID, DISCORD_GUILD_ID), {
     body: [
       rollCommand.toJSON(),
+      uokCommand.toJSON(),
       purgeCommand.toJSON(),
       timeoutCommand.toJSON(),
       untimeoutCommand.toJSON(),
@@ -894,6 +899,14 @@ async function main() {
   client.on('interactionCreate', async (interaction) => {
     try {
       if (!interaction.isChatInputCommand()) return;
+
+      if (interaction.commandName === 'uok') {
+        const uptimeSec = Math.floor(process.uptime());
+        const pingMs = Number.isFinite(client.ws?.ping) ? Math.round(client.ws.ping) : null;
+        const pingPart = pingMs === null ? '' : ` | ping ${pingMs}ms`;
+        await interaction.reply({ content: `✅ OK | uptime ${uptimeSec}s${pingPart}`, flags: MessageFlags.Ephemeral });
+        return;
+      }
 
       if (interaction.commandName === 'aspects_post') {
         if (!interaction.guild) {
