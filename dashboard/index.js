@@ -201,7 +201,7 @@ function parseHealthcheckTargets() {
     targets.push({ service: 'game_status', url: `${DARK_CITY_API_BASE_URL.replace(/\/$/, '')}/status-ping`, expectStatus: 200 });
   }
   const mapBase = String(process.env.DARK_CITY_MAP_BASE_URL || '').trim().replace(/\/$/, '');
-  if (mapBase) targets.push({ service: 'map', url: `${mapBase}/health`, expectStatus: 200 });
+  if (mapBase) targets.push({ service: 'map', url: `${mapBase}/status-ping`, expectStatus: 200 });
   const moderatorBase = String(process.env.DARK_CITY_MODERATOR_BASE_URL || '').trim().replace(/\/$/, '');
   if (moderatorBase) targets.push({ service: 'moderator', url: `${moderatorBase}/health`, expectStatus: 200 });
   const dashboardBase = String(process.env.DARK_CITY_DASHBOARD_BASE_URL || '').trim().replace(/\/$/, '');
@@ -320,7 +320,8 @@ function startServiceHealthMonitor() {
           if (now - last >= cooldownMs) {
             lastErrorRateAlertAtByService.set(target.service, now);
             await postDiscordWebhook(
-              `⚠️ Elevated error rate: **${target.service}** (${Math.round(rate * 100)}% failures over last ${Math.max(1, SERVICE_HEALTHCHECK_ERROR_WINDOW)} checks)`
+              `⚠️ Elevated error rate: **${target.service}** (${Math.round(rate * 100)}% failures over last ${Math.max(1, SERVICE_HEALTHCHECK_ERROR_WINDOW)} checks)` +
+                ` | last=${result.status || 0}${result.error ? ` (${result.error})` : ''}`
             );
           }
         }
