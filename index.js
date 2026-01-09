@@ -131,6 +131,44 @@ function startHeartbeatLoop() {
   }, intervalMs);
 }
 
+async function pingUrl(url, timeoutMs) {
+  const startedAt = Date.now();
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), Math.max(500, timeoutMs || 6000));
+  try {
+    const res = await fetch(url, { method: 'GET', redirect: 'follow', signal: ctrl.signal });
+    return { ok: res.ok, status: res.status, ms: Date.now() - startedAt };
+  } catch (e) {
+    return { ok: false, status: 0, ms: Date.now() - startedAt, error: e?.name || e?.message || 'fetch_failed' };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function getLatestHealthDoc(service) {
+  try {
+    if (!botDb) return null;
+    return await botDb
+      .collection('service_health_checks')
+      .find({ guildId: DISCORD_GUILD_ID, service: String(service) })
+      .sort({ checkedAt: -1 })
+      .limit(1)
+      .next();
+  } catch {
+    return null;
+  }
+}
+
+function formatAgo(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '?';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  return `${h}h`;
+}
+
 async function loadSettings() {
   if (!botDb) return;
   const doc = await botDb.collection('bot_settings').findOne({ guildId: DISCORD_GUILD_ID });
@@ -326,6 +364,10 @@ const uokCommand = new SlashCommandBuilder()
   .setName('uok')
   .setDescription('Quick bot liveness check');
 
+const statusReportCommand = new SlashCommandBuilder()
+  .setName('statusreport')
+  .setDescription('Brief status report for game/map/dashboard/bot');
+
 const cardCommand = new SlashCommandBuilder()
   .setName('card')
   .setDescription('Show your linked character card (level/xp)');
@@ -353,6 +395,7 @@ async function registerCommands() {
     body: [
       rollCommand.toJSON(),
       uokCommand.toJSON(),
+      statusReportCommand.toJSON(),
       purgeCommand.toJSON(),
       timeoutCommand.toJSON(),
       untimeoutCommand.toJSON(),
@@ -905,6 +948,61 @@ async function main() {
         const pingMs = Number.isFinite(client.ws?.ping) ? Math.round(client.ws.ping) : null;
         const pingPart = pingMs === null ? '' : ` | ping ${pingMs}ms`;
         await interaction.reply({ content: `✅ OK | uptime ${uptimeSec}s${pingPart}`, flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      if (interaction.commandName === 'statusreport') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+        const apiBase = String(process.env.DARK_CITY_API_BASE_URL || '').trim().replace(/\/$/, '');
+        const mapBase = String(process.env.DARK_CITY_MAP_BASE_URL || '').trim().replace(/\/$/, '');
+        const dashBase = String(process.env.DARK_CITY_DASHBOARD_BASE_URL || '').trim().replace(/\/$/, '');
+
+        const targets = [
+          { label: 'Game', service: 'game', url: apiBase ? `${apiBase}/status-ping` : null },
+          { label: 'Map', service: 'map', url: mapBase ? `${mapBase}/status-ping` : null },
+          { label: 'Dashboard', service: 'dashboard', url: dashBase ? `${dashBase}/health` : null },
+        ];
+
+        const lines = [];
+        lines.push('**Dark City Status Report**');
+
+        for (const t of targets) {
+          if (!t.url) {
+            lines.push(`- **${t.label}**: missing URL env var`);
+            continue;
+          }
+
+          const [live, last] = await Promise.all([
+            pingUrl(t.url, 6000),
+            getLatestHealthDoc(t.service),
+          ]);
+
+          const lastOk = last ? (last.ok ? 'OK' : 'FAIL') : 'n/a';
+          const lastAge = last?.checkedAt ? formatAgo(Date.now() - new Date(last.checkedAt).getTime()) : 'n/a';
+          const lastDetail = last ? `${lastOk} ${lastAge} ago` : 'n/a';
+
+          const liveDetail = live.ok
+            ? `OK (${live.status}) ${live.ms}ms`
+            : `FAIL (${live.status || 0}${live.error ? ` ${live.error}` : ''}) ${live.ms}ms`;
+
+          lines.push(`- **${t.label}**: live ${liveDetail} | last ${lastDetail}`);
+        }
+
+        // Bot service (this process)
+        const uptimeSec = Math.floor(process.uptime());
+        const wsPingMs = Number.isFinite(client.ws?.ping) ? Math.round(client.ws.ping) : null;
+        const wsPingPart = wsPingMs === null ? 'n/a' : `${wsPingMs}ms`;
+
+        let hbAge = null;
+        if (botDb) {
+          const hb = await botDb.collection('bot_heartbeats').findOne({ guildId: DISCORD_GUILD_ID, service: 'bot' });
+          if (hb?.lastSeenAt) hbAge = Date.now() - new Date(hb.lastSeenAt).getTime();
+        }
+        const hbPart = hbAge === null ? 'n/a' : `${formatAgo(hbAge)} ago`;
+        lines.push(`- **Bot service**: uptime ${uptimeSec}s | ws ping ${wsPingPart} | heartbeat ${hbPart}`);
+
+        await interaction.editReply(lines.join('\n'));
         return;
       }
 
