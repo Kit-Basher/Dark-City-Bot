@@ -175,6 +175,23 @@ async function getRecentLogs(limit) {
     .toArray();
 }
 
+async function getRecentTelemetryEvents(filters, limit) {
+  if (!botDb) return [];
+  const n = Number.isFinite(limit) ? limit : 100;
+
+  const q = { guildId: DISCORD_GUILD_ID };
+  if (filters && filters.service) q.service = String(filters.service);
+  if (filters && filters.level) q.level = String(filters.level);
+  if (filters && filters.category) q.category = String(filters.category);
+
+  return botDb
+    .collection('telemetry_events')
+    .find(q)
+    .sort({ createdAt: -1 })
+    .limit(Math.max(1, Math.min(500, n)))
+    .toArray();
+}
+
 function requireTelemetryToken(req, res) {
   if (!TELEMETRY_INGEST_TOKEN) {
     res.status(503).json({ error: 'Telemetry ingestion is not configured' });
@@ -198,6 +215,15 @@ function sanitizeTelemetryString(v, maxLen) {
 async function insertTelemetryEvent(doc) {
   if (!botDb) return;
   await botDb.collection('telemetry_events').insertOne(doc);
+}
+
+function escapeHtml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function htmlPage(title, body) {
@@ -961,16 +987,66 @@ app.post('/settings', requireLogin, async (req, res) => {
 app.get('/logs', requireLogin, async (req, res) => {
   try {
     const limit = parseInt(req.query?.limit, 10);
-    const logs = await getRecentLogs(Number.isFinite(limit) ? limit : 100);
+    const n = Number.isFinite(limit) ? limit : 150;
+    const source = String(req.query?.source || 'all');
+    const service = String(req.query?.service || '');
+    const level = String(req.query?.level || '');
+    const category = String(req.query?.category || '');
+
+    const botLogs = source === 'telemetry' ? [] : await getRecentLogs(n);
+    const telemetryLogs = source === 'bot' ? [] : await getRecentTelemetryEvents(
+      {
+        service: service || null,
+        level: level || null,
+        category: category || null,
+      },
+      n
+    );
+
+    const logs = [];
+    for (const l of botLogs) {
+      logs.push({
+        createdAt: l.createdAt,
+        service: 'bot',
+        level: l.level,
+        category: null,
+        event: l.event,
+        message: l.message,
+        actorUserId: l.meta?.actorUserId || null,
+        meta: l.meta || null,
+      });
+    }
+    for (const l of telemetryLogs) {
+      logs.push({
+        createdAt: l.createdAt,
+        service: l.service || 'unknown',
+        level: l.level,
+        category: l.category || null,
+        event: l.event,
+        message: l.message,
+        actorUserId: l.actorUserId || null,
+        meta: l.meta || null,
+      });
+    }
+
+    logs.sort((a, b) => {
+      const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return tb - ta;
+    });
+
+    const merged = logs.slice(0, n);
     const mongoOk = Boolean(botDb);
 
-    const rows = logs
+    const rows = merged
       .map((l) => {
         const ts = l.createdAt ? new Date(l.createdAt).toISOString() : '';
         const meta = l.meta ? JSON.stringify(l.meta) : '';
         return `<tr>
           <td style="white-space:nowrap; padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${ts}</td>
+          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.service || ''}</td>
           <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.level || ''}</td>
+          <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.category || ''}</td>
           <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.event || ''}</td>
           <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08);">${l.message || ''}</td>
           <td style="padding:8px; border-bottom:1px solid rgba(255,255,255,0.08); max-width:320px; overflow:hidden; text-overflow:ellipsis;">${meta}</td>
@@ -985,20 +1061,60 @@ app.get('/logs', requireLogin, async (req, res) => {
           ${nav(req)}
           <h1>Logs</h1>
           <p class="muted">Mongo: <strong>${mongoOk ? 'connected' : 'not configured'}</strong></p>
-          <p class="muted">Showing latest ${logs.length} events.</p>
+          <form method="GET" action="/logs" style="display:flex; gap:10px; flex-wrap:wrap; align-items:end; margin: 12px 0 16px 0;">
+            <div>
+              <label class="muted" for="source">Source</label><br/>
+              <select id="source" name="source" style="padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;">
+                <option value="all" ${source === 'all' ? 'selected' : ''}>All</option>
+                <option value="telemetry" ${source === 'telemetry' ? 'selected' : ''}>Telemetry</option>
+                <option value="bot" ${source === 'bot' ? 'selected' : ''}>Bot</option>
+              </select>
+            </div>
+            <div>
+              <label class="muted" for="service">Service</label><br/>
+              <select id="service" name="service" style="padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;">
+                <option value="" ${!service ? 'selected' : ''}>All</option>
+                <option value="game" ${service === 'game' ? 'selected' : ''}>game</option>
+                <option value="map" ${service === 'map' ? 'selected' : ''}>map</option>
+                <option value="bot" ${service === 'bot' ? 'selected' : ''}>bot</option>
+              </select>
+            </div>
+            <div>
+              <label class="muted" for="level">Level</label><br/>
+              <select id="level" name="level" style="padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;">
+                <option value="" ${!level ? 'selected' : ''}>All</option>
+                <option value="info" ${level === 'info' ? 'selected' : ''}>info</option>
+                <option value="warn" ${level === 'warn' ? 'selected' : ''}>warn</option>
+                <option value="error" ${level === 'error' ? 'selected' : ''}>error</option>
+                <option value="security" ${level === 'security' ? 'selected' : ''}>security</option>
+              </select>
+            </div>
+            <div>
+              <label class="muted" for="category">Category</label><br/>
+              <input id="category" name="category" value="${escapeHtml(category)}" placeholder="e.g. pins" style="padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+            </div>
+            <div>
+              <label class="muted" for="limit">Limit</label><br/>
+              <input id="limit" name="limit" inputmode="numeric" value="${String(n)}" style="width:120px; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color: #e6e9f2;" />
+            </div>
+            <button class="btn" type="submit">Apply</button>
+          </form>
+          <p class="muted">Showing latest ${merged.length} events.</p>
           <div style="overflow:auto;">
             <table style="width:100%; border-collapse:collapse; font-size: 13px;">
               <thead>
                 <tr>
                   <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(255,255,255,0.12);">Time</th>
+                  <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(255,255,255,0.12);">Service</th>
                   <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(255,255,255,0.12);">Level</th>
+                  <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(255,255,255,0.12);">Category</th>
                   <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(255,255,255,0.12);">Event</th>
                   <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(255,255,255,0.12);">Message</th>
                   <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(255,255,255,0.12);">Meta</th>
                 </tr>
               </thead>
               <tbody>
-                ${rows || '<tr><td colspan="5" class="muted" style="padding:8px;">No logs yet.</td></tr>'}
+                ${rows || '<tr><td colspan="7" class="muted" style="padding:8px;">No logs yet.</td></tr>'}
               </tbody>
             </table>
           </div>
