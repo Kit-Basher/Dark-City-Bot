@@ -38,6 +38,14 @@ let DARK_CITY_MODERATOR_PASSWORD = String(process.env.DARK_CITY_MODERATOR_PASSWO
 
 const TELEMETRY_INGEST_TOKEN = String(process.env.TELEMETRY_INGEST_TOKEN || '').trim();
 
+const SERVICE_HEALTHCHECKS_ENABLED = String(process.env.SERVICE_HEALTHCHECKS_ENABLED || 'true').trim().toLowerCase() !== 'false';
+const SERVICE_HEALTHCHECK_INTERVAL_SECONDS = parseInt(process.env.SERVICE_HEALTHCHECK_INTERVAL_SECONDS || '60', 10);
+const SERVICE_HEALTHCHECK_TIMEOUT_MS = parseInt(process.env.SERVICE_HEALTHCHECK_TIMEOUT_MS || '6000', 10);
+const SERVICE_HEALTHCHECK_DISCORD_WEBHOOK_URL = String(process.env.SERVICE_HEALTHCHECK_DISCORD_WEBHOOK_URL || '').trim();
+const SERVICE_HEALTHCHECK_ERROR_WINDOW = parseInt(process.env.SERVICE_HEALTHCHECK_ERROR_WINDOW || '20', 10);
+const SERVICE_HEALTHCHECK_ERROR_RATE_THRESHOLD = parseFloat(process.env.SERVICE_HEALTHCHECK_ERROR_RATE_THRESHOLD || '0.5');
+const SERVICE_HEALTHCHECK_ERROR_ALERT_COOLDOWN_MINUTES = parseInt(process.env.SERVICE_HEALTHCHECK_ERROR_ALERT_COOLDOWN_MINUTES || '30', 10);
+
 const MONGODB_URI = process.env.MONGODB_URI;
 const BOT_DB_NAME = process.env.BOT_DB_NAME || 'dark_city_bot';
 
@@ -139,6 +147,176 @@ async function initMongo() {
   } catch (e) {
     console.error('Mongo telemetry TTL index failed:', e);
   }
+
+  try {
+    await botDb.collection('service_health_checks').createIndex({ checkedAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 7 });
+    await botDb.collection('service_health_checks').createIndex({ guildId: 1, service: 1, checkedAt: -1 });
+  } catch (e) {
+    console.error('Mongo service health TTL/index failed:', e);
+  }
+}
+
+function parseHealthcheckTargets() {
+  const raw = String(process.env.SERVICE_HEALTHCHECK_TARGETS || '').trim();
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((t) => ({
+            service: String(t?.service || '').trim(),
+            url: String(t?.url || '').trim(),
+            expectStatus: Number.isFinite(t?.expectStatus) ? t.expectStatus : undefined,
+          }))
+          .filter((t) => t.service && t.url);
+      }
+    } catch {
+      const items = raw.split(',').map((s) => s.trim()).filter(Boolean);
+      return items
+        .map((entry) => {
+          const [service, url] = entry.split('|').map((s) => String(s || '').trim());
+          return { service, url };
+        })
+        .filter((t) => t.service && t.url);
+    }
+  }
+
+  const targets = [];
+  if (DARK_CITY_API_BASE_URL) {
+    targets.push({ service: 'game', url: `${DARK_CITY_API_BASE_URL.replace(/\/$/, '')}/health`, expectStatus: 200 });
+    targets.push({ service: 'game_status', url: `${DARK_CITY_API_BASE_URL.replace(/\/$/, '')}/status-ping`, expectStatus: 200 });
+  }
+  const mapBase = String(process.env.DARK_CITY_MAP_BASE_URL || '').trim().replace(/\/$/, '');
+  if (mapBase) targets.push({ service: 'map', url: `${mapBase}/health`, expectStatus: 200 });
+  const moderatorBase = String(process.env.DARK_CITY_MODERATOR_BASE_URL || '').trim().replace(/\/$/, '');
+  if (moderatorBase) targets.push({ service: 'moderator', url: `${moderatorBase}/health`, expectStatus: 200 });
+  const dashboardBase = String(process.env.DARK_CITY_DASHBOARD_BASE_URL || '').trim().replace(/\/$/, '');
+  if (dashboardBase) targets.push({ service: 'dashboard', url: `${dashboardBase}/health`, expectStatus: 200 });
+  return targets;
+}
+
+async function postDiscordWebhook(content) {
+  if (!SERVICE_HEALTHCHECK_DISCORD_WEBHOOK_URL) return;
+  try {
+    await fetch(SERVICE_HEALTHCHECK_DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: String(content || '').slice(0, 1900) }),
+    });
+  } catch (e) {
+    console.error('Healthcheck webhook post failed:', e?.message || e);
+  }
+}
+
+async function insertServiceHealthCheck(doc) {
+  if (!botDb) return;
+  await botDb.collection('service_health_checks').insertOne(doc);
+}
+
+async function computeRecentErrorRate(service, windowSize) {
+  if (!botDb) return null;
+  const n = Math.max(1, Math.min(200, Number.isFinite(windowSize) ? windowSize : 20));
+  const rows = await botDb
+    .collection('service_health_checks')
+    .find({ guildId: DISCORD_GUILD_ID, service: String(service) })
+    .sort({ checkedAt: -1 })
+    .limit(n)
+    .toArray();
+  if (!rows.length) return null;
+  const failed = rows.filter((r) => r && r.ok === false).length;
+  return failed / rows.length;
+}
+
+async function pingServiceTarget(target) {
+  const startedAt = Date.now();
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), Math.max(1000, SERVICE_HEALTHCHECK_TIMEOUT_MS));
+  try {
+    const res = await fetch(target.url, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: ctrl.signal,
+    });
+    const ms = Date.now() - startedAt;
+    const expected = Number.isFinite(target.expectStatus) ? target.expectStatus : 200;
+    const ok = res.status === expected;
+    return { ok, status: res.status, responseTimeMs: ms };
+  } catch (e) {
+    const ms = Date.now() - startedAt;
+    return { ok: false, status: 0, responseTimeMs: ms, error: e?.name || e?.message || 'fetch_failed' };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function startServiceHealthMonitor() {
+  if (!SERVICE_HEALTHCHECKS_ENABLED) return;
+  if (!SERVICE_HEALTHCHECK_DISCORD_WEBHOOK_URL) {
+    console.log('ℹ️ Healthchecks: SERVICE_HEALTHCHECK_DISCORD_WEBHOOK_URL not set; alerts disabled');
+  }
+
+  const targets = parseHealthcheckTargets();
+  if (!targets.length) {
+    console.log('ℹ️ Healthchecks: no targets configured');
+    return;
+  }
+
+  const lastOkByService = new Map();
+  const lastErrorRateAlertAtByService = new Map();
+  const intervalMs = Math.max(15, Number.isFinite(SERVICE_HEALTHCHECK_INTERVAL_SECONDS) ? SERVICE_HEALTHCHECK_INTERVAL_SECONDS : 60) * 1000;
+
+  async function tick() {
+    for (const target of targets) {
+      const result = await pingServiceTarget(target);
+      const checkedAt = new Date();
+
+      try {
+        await insertServiceHealthCheck({
+          guildId: DISCORD_GUILD_ID,
+          service: target.service,
+          url: target.url,
+          ok: result.ok,
+          status: result.status,
+          responseTimeMs: result.responseTimeMs,
+          error: result.ok ? null : (result.error || null),
+          checkedAt,
+        });
+      } catch (e) {
+        console.error('Healthcheck insert failed:', e?.message || e);
+      }
+
+      const prev = lastOkByService.get(target.service);
+      if (prev === undefined) {
+        lastOkByService.set(target.service, result.ok);
+      } else if (prev !== result.ok) {
+        lastOkByService.set(target.service, result.ok);
+        const msg = result.ok
+          ? `✅ Service recovered: **${target.service}** (${target.url})`
+          : `🚨 Service DOWN: **${target.service}** (${target.url})`;
+        await postDiscordWebhook(msg);
+      }
+
+      if (!result.ok) {
+        const rate = await computeRecentErrorRate(target.service, SERVICE_HEALTHCHECK_ERROR_WINDOW);
+        if (rate !== null && rate >= SERVICE_HEALTHCHECK_ERROR_RATE_THRESHOLD) {
+          const now = Date.now();
+          const last = lastErrorRateAlertAtByService.get(target.service) || 0;
+          const cooldownMs = Math.max(1, SERVICE_HEALTHCHECK_ERROR_ALERT_COOLDOWN_MINUTES) * 60 * 1000;
+          if (now - last >= cooldownMs) {
+            lastErrorRateAlertAtByService.set(target.service, now);
+            await postDiscordWebhook(
+              `⚠️ Elevated error rate: **${target.service}** (${Math.round(rate * 100)}% failures over last ${Math.max(1, SERVICE_HEALTHCHECK_ERROR_WINDOW)} checks)`
+            );
+          }
+        }
+      }
+    }
+  }
+
+  void tick();
+  setInterval(() => {
+    void tick();
+  }, intervalMs);
 }
 
 async function getSettings() {
@@ -1135,6 +1313,11 @@ app.listen(PORT, () => {
   console.log(`🛠️ Bot dashboard listening on port ${PORT}`);
 });
 
-initMongo().catch((e) => {
-  console.error('Mongo init failed:', e);
-});
+initMongo()
+  .then(() => {
+    startServiceHealthMonitor();
+  })
+  .catch((e) => {
+    console.error('Mongo init failed:', e);
+    startServiceHealthMonitor();
+  });
