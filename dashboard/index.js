@@ -197,8 +197,7 @@ function parseHealthcheckTargets() {
 
   const targets = [];
   if (DARK_CITY_API_BASE_URL) {
-    targets.push({ service: 'game', url: `${DARK_CITY_API_BASE_URL.replace(/\/$/, '')}/health`, expectStatus: 200 });
-    targets.push({ service: 'game_status', url: `${DARK_CITY_API_BASE_URL.replace(/\/$/, '')}/status-ping`, expectStatus: 200 });
+    targets.push({ service: 'game', url: `${DARK_CITY_API_BASE_URL.replace(/\/$/, '')}/status-ping`, expectStatus: 200 });
   }
   const mapBase = String(process.env.DARK_CITY_MAP_BASE_URL || '').trim().replace(/\/$/, '');
   if (mapBase) targets.push({ service: 'map', url: `${mapBase}/status-ping`, expectStatus: 200 });
