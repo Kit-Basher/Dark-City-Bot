@@ -208,7 +208,7 @@ function parseHealthcheckTargets() {
     targets.push({ service: 'game', url: `${root}/status-ping`, expectStatus: 200 });
   }
   const mapBase = String(process.env.DARK_CITY_MAP_BASE_URL || '').trim().replace(/\/$/, '');
-  if (mapBase) targets.push({ service: 'map', url: `${mapBase}/`, expectStatus: 200 });
+  if (mapBase) targets.push({ service: 'map', url: `${mapBase}/status-ping`, expectStatus: 200 });
   const moderatorBase = String(process.env.DARK_CITY_MODERATOR_BASE_URL || '').trim().replace(/\/$/, '');
   if (moderatorBase) targets.push({ service: 'moderator', url: `${moderatorBase}/health`, expectStatus: 200 });
   const dashboardBase = String(process.env.DARK_CITY_DASHBOARD_BASE_URL || '').trim().replace(/\/$/, '');
