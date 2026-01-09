@@ -351,6 +351,16 @@ const rollCommand = new SlashCommandBuilder()
   .setName('r')
   .setDescription('Roll 2d6');
 
+const rplusCommand = new SlashCommandBuilder()
+  .setName('r+')
+  .setDescription('Roll 2d6 with skill bonus')
+  .addStringOption((opt) =>
+    opt
+      .setName('skill')
+      .setDescription('Skill name to add bonus from')
+      .setRequired(true)
+  );
+
 const purgeCommand = new SlashCommandBuilder()
   .setName('purge')
   .setDescription('Delete recent messages in this channel (mods only)')
@@ -455,6 +465,7 @@ async function registerCommands() {
   await rest.put(Routes.applicationGuildCommands(DISCORD_APPLICATION_ID, DISCORD_GUILD_ID), {
     body: [
       rollCommand.toJSON(),
+      rplusCommand.toJSON(),
       uokCommand.toJSON(),
       statusReportCommand.toJSON(),
       fullReportCommand.toJSON(),
@@ -1458,6 +1469,105 @@ async function main() {
           d2,
           total,
         });
+        return;
+      }
+
+      if (interaction.commandName === 'r+') {
+        const now = Date.now();
+        const userId = interaction.user?.id;
+        const channelId = interaction.channelId;
+        const skillName = interaction.options.getString('skill', true);
+
+        const userRemaining = getCooldownRemainingMs(lastRollByUser, userId, rCooldownUserMs, now);
+        const channelRemaining = getCooldownRemainingMs(lastRollByChannel, channelId, rCooldownChannelMs, now);
+        const remaining = Math.max(userRemaining, channelRemaining);
+
+        if (remaining > 0) {
+          const seconds = Math.ceil(remaining / 1000);
+          await interaction.reply({
+            content: `⏳ Slow down! Try again in ${seconds}s.`,
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        if (userId) lastRollByUser.set(userId, now);
+        if (channelId) lastRollByChannel.set(channelId, now);
+        pruneOldEntries(lastRollByUser, Math.max(rCooldownUserMs, 60000) * 10, now);
+        pruneOldEntries(lastRollByChannel, Math.max(rCooldownChannelMs, 60000) * 10, now);
+
+        try {
+          // Fetch character data from API
+          const characterUrl = `${DARK_CITY_API_BASE_URL}/api/characters/discord/by-user/${userId}`;
+          const characterResponse = await fetch(characterUrl, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 5000,
+          });
+
+          let skillBonus = 0;
+          let characterName = null;
+
+          if (characterResponse.ok) {
+            const character = await characterResponse.json();
+            characterName = character.name;
+            
+            // Find the skill bonus
+            if (character.skills && Array.isArray(character.skills)) {
+              const skill = character.skills.find(s => 
+                s.name && s.name.toLowerCase() === skillName.toLowerCase()
+              );
+              if (skill) {
+                skillBonus = skill.level || 0;
+              }
+            }
+          }
+
+          const { d1, d2, total } = roll2d6();
+          const finalTotal = total + skillBonus;
+
+          let response = `🎲 2d6: ${d1} + ${d2} = **${total}**`;
+          
+          if (skillBonus > 0) {
+            response += ` + ${skillName} (+${skillBonus}) = **${finalTotal}**`;
+            if (characterName) {
+              response += `\n*Roll for ${characterName}*`;
+            }
+          } else if (characterName) {
+            response += `\n*Roll for ${characterName} (no ${skillName} skill found)*`;
+          } else {
+            response += `\n*No character linked or ${skillName} skill not found*`;
+          }
+
+          await interaction.reply(response);
+
+          logEvent('info', 'roll_2d6_plus', 'Rolled 2d6 with skill bonus', {
+            userId,
+            channelId,
+            skillName,
+            skillBonus,
+            characterName,
+            d1,
+            d2,
+            total,
+            finalTotal,
+          });
+        } catch (error) {
+          console.error('Error fetching character for r+ command:', error);
+          
+          // Fallback to normal roll if API fails
+          const { d1, d2, total } = roll2d6();
+          await interaction.reply(`🎲 2d6: ${d1} + ${d2} = **${total}**\n*Could not fetch character data*`);
+
+          logEvent('error', 'roll_2d6_plus_error', 'Error in r+ command', {
+            userId,
+            channelId,
+            skillName,
+            error: error.message,
+          });
+        }
         return;
       }
 
