@@ -352,7 +352,7 @@ const rollCommand = new SlashCommandBuilder()
   .setDescription('Roll 2d6');
 
 const rplusCommand = new SlashCommandBuilder()
-  .setName('r+')
+  .setName('rplus')
   .setDescription('Roll 2d6 with skill bonus')
   .addStringOption((opt) =>
     opt
@@ -1568,7 +1568,7 @@ async function main() {
         return;
       }
 
-      if (interaction.commandName === 'r+') {
+      if (interaction.commandName === 'rplus') {
         const now = Date.now();
         const userId = interaction.user?.id;
         const channelId = interaction.channelId;
