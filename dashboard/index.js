@@ -30,10 +30,13 @@ const DISCORD_REDIRECT_URI = requireEnv('DISCORD_REDIRECT_URI');
 const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
 const DASHBOARD_ALLOWED_ROLE_ID = process.env.DASHBOARD_ALLOWED_ROLE_ID;
 const ADMIN_ROLE_ID = String(process.env.ADMIN_ROLE_ID || DASHBOARD_ALLOWED_ROLE_ID || '').trim();
+const DISCORD_CALLBACK_URL = requireEnv('DISCORD_CALLBACK_URL');
 const SESSION_SECRET = requireEnv('SESSION_SECRET');
 
 const DARK_CITY_API_BASE_URL = String(process.env.DARK_CITY_API_BASE_URL || '').trim().replace(/\/$/, '');
 let DARK_CITY_MODERATOR_PASSWORD = String(process.env.DARK_CITY_MODERATOR_PASSWORD || '').trim();
+
+const TELEMETRY_INGEST_TOKEN = String(process.env.TELEMETRY_INGEST_TOKEN || '').trim();
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const BOT_DB_NAME = process.env.BOT_DB_NAME || 'dark_city_bot';
@@ -42,6 +45,7 @@ const app = express();
 
 app.set('trust proxy', 1);
 
+app.use(express.json({ limit: '64kb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(
   session({
@@ -60,6 +64,61 @@ app.get('/favicon.ico', (req, res) => {
   res.status(204).end();
 });
 
+app.post('/api/telemetry/event', async (req, res) => {
+  try {
+    if (!requireTelemetryToken(req, res)) return;
+    if (!botDb) {
+      res.status(503).json({ error: 'Mongo not configured' });
+      return;
+    }
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const service = sanitizeTelemetryString(body.service, 32);
+    const level = sanitizeTelemetryString(body.level, 12);
+    const category = sanitizeTelemetryString(body.category, 32);
+    const event = sanitizeTelemetryString(body.event, 64);
+    const message = sanitizeTelemetryString(body.message, 500);
+    const actorUserId = sanitizeTelemetryString(body.actorUserId || body.userId, 64);
+
+    if (!service || !level || !event) {
+      res.status(400).json({ error: 'service, level, and event are required' });
+      return;
+    }
+
+    const allowedLevels = new Set(['info', 'warn', 'error', 'security']);
+    if (!allowedLevels.has(level)) {
+      res.status(400).json({ error: 'Invalid level' });
+      return;
+    }
+
+    const meta = body.meta && typeof body.meta === 'object' ? body.meta : null;
+    const safeMeta = meta
+      ? {
+          requestId: sanitizeTelemetryString(meta.requestId, 64),
+          targetId: sanitizeTelemetryString(meta.targetId, 64),
+          resourceId: sanitizeTelemetryString(meta.resourceId, 64),
+        }
+      : null;
+
+    await insertTelemetryEvent({
+      guildId: DISCORD_GUILD_ID,
+      service,
+      level,
+      category: category || null,
+      event,
+      message: message || null,
+      actorUserId: actorUserId || null,
+      meta: safeMeta,
+      createdAt: new Date(),
+    });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Telemetry ingest error:', e);
+    res.status(500).json({ error: e?.message || 'Server error' });
+  }
+});
+
 let mongoClient;
 let botDb;
 
@@ -73,6 +132,13 @@ async function initMongo() {
   await mongoClient.connect();
   botDb = mongoClient.db(BOT_DB_NAME);
   console.log('✅ Mongo: Connected');
+
+  try {
+    // Auto-expire telemetry after 7 days
+    await botDb.collection('telemetry_events').createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 7 });
+  } catch (e) {
+    console.error('Mongo telemetry TTL index failed:', e);
+  }
 }
 
 async function getSettings() {
@@ -107,6 +173,31 @@ async function getRecentLogs(limit) {
     .sort({ createdAt: -1 })
     .limit(Math.max(1, Math.min(500, n)))
     .toArray();
+}
+
+function requireTelemetryToken(req, res) {
+  if (!TELEMETRY_INGEST_TOKEN) {
+    res.status(503).json({ error: 'Telemetry ingestion is not configured' });
+    return false;
+  }
+
+  const provided = String(req.headers['x-telemetry-token'] || '').trim();
+  if (!provided || provided !== TELEMETRY_INGEST_TOKEN) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return false;
+  }
+  return true;
+}
+
+function sanitizeTelemetryString(v, maxLen) {
+  if (!v) return '';
+  const s = String(v);
+  return s.length > maxLen ? s.slice(0, maxLen) : s;
+}
+
+async function insertTelemetryEvent(doc) {
+  if (!botDb) return;
+  await botDb.collection('telemetry_events').insertOne(doc);
 }
 
 function htmlPage(title, body) {
