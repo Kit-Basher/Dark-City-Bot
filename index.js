@@ -1036,6 +1036,7 @@ async function main() {
       GatewayIntentBits.GuildMembers,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
+      GatewayIntentBits.GuildMessageReactions,
     ],
   });
 
@@ -2372,18 +2373,36 @@ async function main() {
 
   client.on('messageReactionAdd', async (reaction, user) => {
     try {
+      console.log(`Reaction detected: ${reaction.emoji.name} by ${user.tag} (${user.id}) on message ${reaction.message.id}`);
+      
       // Only process reactions in the correct guild
-      if (!reaction.message.guild || reaction.message.guild.id !== DISCORD_GUILD_ID) return;
+      if (!reaction.message.guild || reaction.message.guild.id !== DISCORD_GUILD_ID) {
+        console.log(`Ignoring reaction - wrong guild. Expected: ${DISCORD_GUILD_ID}, Got: ${reaction.message.guild?.id}`);
+        return;
+      }
       
       // Only process reactions to the specific message
-      if (reaction.message.id !== REACTION_ROLE_MESSAGE_ID) return;
+      if (reaction.message.id !== REACTION_ROLE_MESSAGE_ID) {
+        console.log(`Ignoring reaction - wrong message. Expected: ${REACTION_ROLE_MESSAGE_ID}, Got: ${reaction.message.id}`);
+        return;
+      }
       
       // Ignore bot reactions
-      if (user.bot) return;
+      if (user.bot) {
+        console.log(`Ignoring bot reaction from ${user.tag}`);
+        return;
+      }
+      
+      console.log(`Processing reaction role for ${user.tag} (${user.id})`);
       
       // Get the member who reacted
       const member = await reaction.message.guild.members.fetch(user.id).catch(() => null);
-      if (!member) return;
+      if (!member) {
+        console.error(`Could not fetch member for user ${user.id}`);
+        return;
+      }
+      
+      console.log(`Fetched member: ${member.user.tag}, current roles: ${member.roles.cache.map(r => r.id).join(', ')}`);
       
       // Check if they already have the reader role
       if (member.roles.cache.has(READER_ROLE_ID)) {
@@ -2394,7 +2413,7 @@ async function main() {
       // Add the reader role
       await member.roles.add(READER_ROLE_ID, 'Reaction role assignment');
       
-      console.log(`Added reader role to ${user.tag} (${user.id})`);
+      console.log(`✅ Added reader role to ${user.tag} (${user.id})`);
       logEvent('info', 'reaction_role_added', 'Reader role assigned via reaction', {
         userId: user.id,
         username: user.tag,
@@ -2403,7 +2422,7 @@ async function main() {
       });
       
     } catch (error) {
-      console.error('Reaction role handler error:', error);
+      console.error('❌ Reaction role handler error:', error);
       logEvent('error', 'reaction_role_error', error?.message || String(error), {
         userId: user?.id,
         messageId: reaction.message?.id,
