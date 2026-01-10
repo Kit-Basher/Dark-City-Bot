@@ -499,7 +499,7 @@ const useFpCommand = new SlashCommandBuilder()
 
 const addFpCommand = new SlashCommandBuilder()
   .setName('fpup')
-  .setDescription('Add 1 fate point (moderators only)')
+  .setDescription('Add 1 fate point to your total')
   .addUserOption((opt) => opt.setName('user').setDescription('User to add fate point to (defaults to yourself)').setRequired(false));
 
 async function registerCommands() {
@@ -1572,7 +1572,6 @@ async function main() {
       }
 
       if (interaction.commandName === 'fpup') {
-        if (!(await requireModerator(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           const user = interaction.options.getUser('user', false);
@@ -1608,8 +1607,8 @@ async function main() {
             const characterName = result.character.name || 'Unknown';
             const targetUser = user ? `<@${user.id}>` : 'your';
             await interaction.editReply(`Added 1 fate point to **${characterName}**. ${targetUser} now have **${currentFp + 1}** fate points.`);
-            logEvent('info', 'fate_point_added', 'Moderator added 1 fate point', {
-              moderatorId: interaction.user?.id,
+            logEvent('info', 'fate_point_added', 'User added 1 fate point', {
+              userId: interaction.user?.id,
               targetUserId: discordUserId,
               previousFp: currentFp,
               newFp: currentFp + 1
@@ -1886,6 +1885,40 @@ async function main() {
             startMessageId: startMessage.id,
             calendarMessageId,
           });
+
+          // Check fate points for all players and give 1 FP to anyone at 0
+          try {
+            for (const userId of userIds) {
+              try {
+                const result = await darkCityApiRequest(`/api/characters/discord/by-user/${userId}`);
+                if (result && result.character) {
+                  const currentFp = result.character.fatePoints || 0;
+                  if (currentFp === 0) {
+                    // Give them 1 fate point
+                    await darkCityApiRequest('/api/characters/discord/update-fate-points', {
+                      method: 'POST',
+                      body: JSON.stringify({ 
+                        discordUserId: userId, 
+                        fatePoints: 1 
+                      }),
+                    });
+                    logEvent('info', 'fate_point_granted', 'Player granted 1 fate point at scene start', {
+                      userId: userId,
+                      characterName: result.character.name,
+                      previousFp: 0,
+                      newFp: 1
+                    });
+                  }
+                }
+              } catch (fpError) {
+                // Don't fail the scene start if fate point check fails
+                console.warn(`Failed to check fate points for user ${userId}:`, fpError?.message || String(fpError));
+              }
+            }
+          } catch (fpCheckError) {
+            // Don't fail the scene start if the whole fate point check fails
+            console.warn('Fate point check failed during scene start:', fpCheckError?.message || String(fpCheckError));
+          }
 
           logEvent('info', 'scene_started', 'Scene started', {
             channelId,
