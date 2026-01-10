@@ -78,9 +78,11 @@ const MONGODB_URI = process.env.MONGODB_URI;
 let mongoClient;
 let botDb;
 
+// Reaction role configuration
+const REACTION_ROLE_MESSAGE_ID = '1459463175370965194';
+const READER_ROLE_ID = '1261096495860682873';
+
 async function main() {
-  const REACTION_ROLE_MESSAGE_ID = '1459463175370965194';
-  const READER_ROLE_ID = '1261096495860682873';
 
   if (process.env.NODE_ENV === 'production' && !MONGODB_URI) {
     console.log('ℹ️ Mongo: MONGODB_URI not set; bot settings/logs disabled');
