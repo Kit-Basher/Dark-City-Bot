@@ -497,6 +497,11 @@ const useFpCommand = new SlashCommandBuilder()
   .setName('fp')
   .setDescription('Use 1 fate point (subtracts from your total)');
 
+const addFpCommand = new SlashCommandBuilder()
+  .setName('fpup')
+  .setDescription('Add 1 fate point (moderators only)')
+  .addUserOption((opt) => opt.setName('user').setDescription('User to add fate point to (defaults to yourself)').setRequired(false));
+
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(DISCORD_BOT_TOKEN);
   await rest.put(Routes.applicationGuildCommands(DISCORD_APPLICATION_ID, DISCORD_GUILD_ID), {
@@ -522,6 +527,7 @@ async function registerCommands() {
       awardXpCommand.toJSON(),
       totalFpCommand.toJSON(),
       useFpCommand.toJSON(),
+      addFpCommand.toJSON(),
       readerRoleCommand.toJSON(),
     ],
   });
@@ -1561,6 +1567,58 @@ async function main() {
           }
         } catch (e) {
           await interaction.editReply(`Failed to use fate point: ${e?.message || String(e)}`);
+        }
+        return;
+      }
+
+      if (interaction.commandName === 'fpup') {
+        if (!(await requireModerator(interaction))) return;
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        try {
+          const user = interaction.options.getUser('user', false);
+          const discordUserId = user?.id || interaction.user?.id;
+          
+          if (!discordUserId) {
+            await interaction.editReply('Could not resolve Discord user ID.');
+            return;
+          }
+
+          const result = await darkCityApiRequest(`/api/characters/discord/by-user/${discordUserId}`);
+          if (!result || !result.character) {
+            await interaction.editReply('No approved character found linked to that account.');
+            return;
+          }
+
+          const currentFp = result.character.fatePoints || 0;
+          if (currentFp >= 5) {
+            await interaction.editReply('That character already has the maximum fate points (5).');
+            return;
+          }
+
+          // Update fate points by calling the character update API
+          const updateResult = await darkCityApiRequest('/api/characters/discord/update-fate-points', {
+            method: 'POST',
+            body: JSON.stringify({ 
+              discordUserId: discordUserId, 
+              fatePoints: currentFp + 1 
+            }),
+          });
+
+          if (updateResult && updateResult.success) {
+            const characterName = result.character.name || 'Unknown';
+            const targetUser = user ? `<@${user.id}>` : 'your';
+            await interaction.editReply(`Added 1 fate point to **${characterName}**. ${targetUser} now have **${currentFp + 1}** fate points.`);
+            logEvent('info', 'fate_point_added', 'Moderator added 1 fate point', {
+              moderatorId: interaction.user?.id,
+              targetUserId: discordUserId,
+              previousFp: currentFp,
+              newFp: currentFp + 1
+            });
+          } else {
+            await interaction.editReply('Failed to update fate points. Please try again.');
+          }
+        } catch (e) {
+          await interaction.editReply(`Failed to add fate point: ${e?.message || String(e)}`);
         }
         return;
       }
