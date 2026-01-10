@@ -26,6 +26,7 @@ const DISCORD_APPLICATION_ID = requireEnv('DISCORD_APPLICATION_ID');
 const DISCORD_GUILD_ID = requireEnv('DISCORD_GUILD_ID');
 
 const MODERATOR_ROLE_ID = process.env.MODERATOR_ROLE_ID || process.env.DASHBOARD_ALLOWED_ROLE_ID || '';
+const WRITER_ROLE_ID = process.env.WRITER_ROLE_ID || '';
 
 const ASPECTS_CHANNEL_ID = process.env.ASPECTS_CHANNEL_ID || '1457635644338868317';
 
@@ -487,7 +488,7 @@ const awardXpCommand = new SlashCommandBuilder()
 
 const totalFpCommand = new SlashCommandBuilder()
   .setName('totalfp')
-  .setDescription('Show your current fate points');
+  .setDescription('Show current fate points (writers and mods only)');
 
 const readerRoleCommand = new SlashCommandBuilder()
   .setName('reader')
@@ -495,11 +496,11 @@ const readerRoleCommand = new SlashCommandBuilder()
 
 const useFpCommand = new SlashCommandBuilder()
   .setName('fp')
-  .setDescription('Use 1 fate point (subtracts from your total)');
+  .setDescription('Use 1 fate point (writers and mods only)');
 
 const addFpCommand = new SlashCommandBuilder()
   .setName('fpup')
-  .setDescription('Add 1 fate point to your total')
+  .setDescription('Add 1 fate point (writers and mods only)')
   .addUserOption((opt) => opt.setName('user').setDescription('User to add fate point to (defaults to yourself)').setRequired(false));
 
 async function registerCommands() {
@@ -934,11 +935,54 @@ function hasModPermission(member) {
   );
 }
 
+function hasWriterOrModPermission(member) {
+  if (!member) return false;
+
+  try {
+    const roles = member.roles;
+    
+    // Check for writer role
+    if (WRITER_ROLE_ID) {
+      if (roles?.cache?.has?.(WRITER_ROLE_ID)) return true;
+      if (Array.isArray(roles) && roles.includes(WRITER_ROLE_ID)) return true;
+    }
+    
+    // Check for moderator role
+    if (MODERATOR_ROLE_ID) {
+      if (roles?.cache?.has?.(MODERATOR_ROLE_ID)) return true;
+      if (Array.isArray(roles) && roles.includes(MODERATOR_ROLE_ID)) return true;
+    }
+    
+    // Check for Discord permissions
+    const perms = member.permissions;
+    if (perms) {
+      return (
+        perms.has(PermissionsBitField.Flags.Administrator) ||
+        perms.has(PermissionsBitField.Flags.ManageGuild) ||
+        perms.has(PermissionsBitField.Flags.ManageMessages) ||
+        perms.has(PermissionsBitField.Flags.ModerateMembers)
+      );
+    }
+  } catch {
+    // ignore
+  }
+
+  return false;
+}
+
 async function requireModerator(interaction) {
   const member = interaction.member;
   const allowed = hasModPermission(member);
   if (allowed) return true;
   await interaction.reply({ content: 'Access denied (mods only).', flags: MessageFlags.Ephemeral });
+  return false;
+}
+
+async function requireWriterOrMod(interaction) {
+  const member = interaction.member;
+  const allowed = hasWriterOrModPermission(member);
+  if (allowed) return true;
+  await interaction.reply({ content: 'Access denied (writers and mods only).', flags: MessageFlags.Ephemeral });
   return false;
 }
 
@@ -1502,6 +1546,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'totalfp') {
+        if (!(await requireWriterOrMod(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           const discordUserId = interaction.user?.id;
@@ -1526,6 +1571,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'fp') {
+        if (!(await requireWriterOrMod(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           const discordUserId = interaction.user?.id;
@@ -1572,6 +1618,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'fpup') {
+        if (!(await requireWriterOrMod(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           const user = interaction.options.getUser('user', false);
