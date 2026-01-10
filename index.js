@@ -2366,6 +2366,52 @@ async function main() {
     }
   });
 
+  // Reaction role handler for reader role
+  const REACTION_ROLE_MESSAGE_ID = '1459459196385890365';
+  const READER_ROLE_ID = '1261096495860682873';
+
+  client.on('messageReactionAdd', async (reaction, user) => {
+    try {
+      // Only process reactions in the correct guild
+      if (!reaction.message.guild || reaction.message.guild.id !== DISCORD_GUILD_ID) return;
+      
+      // Only process reactions to the specific message
+      if (reaction.message.id !== REACTION_ROLE_MESSAGE_ID) return;
+      
+      // Ignore bot reactions
+      if (user.bot) return;
+      
+      // Get the member who reacted
+      const member = await reaction.message.guild.members.fetch(user.id).catch(() => null);
+      if (!member) return;
+      
+      // Check if they already have the reader role
+      if (member.roles.cache.has(READER_ROLE_ID)) {
+        console.log(`User ${user.tag} already has reader role`);
+        return;
+      }
+      
+      // Add the reader role
+      await member.roles.add(READER_ROLE_ID, 'Reaction role assignment');
+      
+      console.log(`Added reader role to ${user.tag} (${user.id})`);
+      logEvent('info', 'reaction_role_added', 'Reader role assigned via reaction', {
+        userId: user.id,
+        username: user.tag,
+        roleId: READER_ROLE_ID,
+        messageId: REACTION_ROLE_MESSAGE_ID,
+      });
+      
+    } catch (error) {
+      console.error('Reaction role handler error:', error);
+      logEvent('error', 'reaction_role_error', error?.message || String(error), {
+        userId: user?.id,
+        messageId: reaction.message?.id,
+        stack: error?.stack,
+      });
+    }
+  });
+
   await client.login(DISCORD_BOT_TOKEN);
 }
 
