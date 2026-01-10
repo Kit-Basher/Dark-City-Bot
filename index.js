@@ -2419,6 +2419,45 @@ async function main() {
     }
   });
 
+  // Message-based reader role command as backup
+  client.on('messageCreate', async (message) => {
+    try {
+      if (message.author?.bot) return;
+      if (!message.guild || message.guild.id !== DISCORD_GUILD_ID) return;
+      
+      const content = message.content?.trim().toLowerCase();
+      if (content === '!reader') {
+        const member = message.member;
+        if (!member || typeof member.roles?.cache?.has !== 'function') {
+          await message.reply('Could not resolve your server roles.');
+          return;
+        }
+
+        if (member.roles.cache.has(READER_ROLE_ID)) {
+          await message.reply('You already have the reader role!');
+          return;
+        }
+
+        try {
+          await member.roles.add(READER_ROLE_ID, 'Reader role requested via message command');
+          await message.reply('✅ Reader role has been assigned to you! You can now access server content.');
+          
+          console.log(`Reader role assigned to ${message.author.tag} (${message.author.id}) via message command`);
+          logEvent('info', 'reader_role_assigned_message', 'Reader role assigned via message command', {
+            userId: message.author.id,
+            username: message.author.tag,
+          });
+        } catch (roleError) {
+          console.error('Reader role message command error:', roleError);
+          await message.reply('Failed to assign reader role. The bot may not have sufficient permissions.');
+        }
+        return;
+      }
+    } catch (error) {
+      console.error('Message reader command error:', error);
+    }
+  });
+
   // Global reaction counter for debugging
   client.on('messageReactionAdd', async (reaction, user) => {
     console.log(`🔥 ANY REACTION: ${reaction.emoji.name} by ${user.tag} (${user.id}) on message ${reaction.message.id} in guild ${reaction.message.guild?.id}`);
