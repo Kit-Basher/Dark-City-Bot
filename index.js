@@ -2368,7 +2368,7 @@ async function main() {
   });
 
   // Reaction role handler for reader role
-  const REACTION_ROLE_MESSAGE_ID = '1459459196385890365';
+  const REACTION_ROLE_MESSAGE_ID = '1459463175370965194';
   const READER_ROLE_ID = '1261096495860682873';
 
   client.on('messageReactionAdd', async (reaction, user) => {
