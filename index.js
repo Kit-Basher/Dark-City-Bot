@@ -1019,7 +1019,6 @@ function pruneOldEntries(map, olderThanMs, now) {
 }
 
 async function main() {
-  await initMongo();
   await ensureSettingsDoc();
   await loadSettings();
 
