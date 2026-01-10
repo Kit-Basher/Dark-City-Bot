@@ -459,23 +459,23 @@ const uokCommand = new SlashCommandBuilder()
 
 const statusReportCommand = new SlashCommandBuilder()
   .setName('statusreport')
-  .setDescription('Brief status report for game/map/dashboard/bot');
+  .setDescription('Brief status report for game/map/dashboard/bot (writers and mods only)');
 
 const fullReportCommand = new SlashCommandBuilder()
   .setName('fullreport')
-  .setDescription('Expanded report for game/map/dashboard/bot');
+  .setDescription('Expanded report for game/map/dashboard/bot (writers and mods only)');
 
 const cardCommand = new SlashCommandBuilder()
   .setName('card')
-  .setDescription('Show your linked character card (level/xp)');
+  .setDescription('Show linked character card (level/xp) (writers and mods only)');
 
 const linkCharacterCommand = new SlashCommandBuilder()
   .setName('linkcharacter')
-  .setDescription('Link your Discord account to your approved character (uses your server nickname)');
+  .setDescription('Link Discord account to approved character (writers and mods only)');
 
 const awardXpCommand = new SlashCommandBuilder()
   .setName('awardxp')
-  .setDescription('Award XP to a member’s linked character (mods only)')
+  .setDescription('Award XP to a member\'s linked character (writers and mods only)')
   .addUserOption((opt) => opt.setName('user').setDescription('User to award XP to').setRequired(true))
   .addIntegerOption((opt) =>
     opt
@@ -1194,6 +1194,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'statusreport') {
+        if (!(await requireWriterOrMod(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const { apiBase, mapBase, dashBase } = getConfiguredUrls();
@@ -1247,6 +1248,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'fullreport') {
+        if (!(await requireWriterOrMod(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const { apiBase, mapBase, dashBase } = getConfiguredUrls();
@@ -1355,7 +1357,7 @@ async function main() {
         }, ttlMs);
         aspectsPostLocks.set(guildId, { startedAt: Date.now(), timer });
 
-        if (!(await requireModerator(interaction))) {
+        if (!(await requireWriterOrMod(interaction))) {
           clearAspectsPostLock(guildId);
           await interaction.editReply('Invalid moderator password.');
           return;
@@ -1452,7 +1454,7 @@ async function main() {
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-        if (!(await requireModerator(interaction))) {
+        if (!(await requireWriterOrMod(interaction))) {
           await interaction.editReply('Invalid moderator password.');
           return;
         }
@@ -1508,6 +1510,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'card') {
+        if (!(await requireWriterOrMod(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           const discordUserId = interaction.user?.id;
@@ -1670,6 +1673,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'linkcharacter') {
+        if (!(await requireWriterOrMod(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           const characterName = getNicknameCharacterName(interaction.member);
@@ -1698,7 +1702,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'awardxp') {
-        if (!(await requireModerator(interaction))) return;
+        if (!(await requireWriterOrMod(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           const user = interaction.options.getUser('user', true);
