@@ -78,8 +78,11 @@ const MONGODB_URI = process.env.MONGODB_URI;
 let mongoClient;
 let botDb;
 
-async function initMongo() {
-  if (!MONGODB_URI) {
+async function main() {
+  const REACTION_ROLE_MESSAGE_ID = '1459463175370965194';
+  const READER_ROLE_ID = '1261096495860682873';
+
+  if (process.env.NODE_ENV === 'production' && !MONGODB_URI) {
     console.log('ℹ️ Mongo: MONGODB_URI not set; bot settings/logs disabled');
     return;
   }
@@ -1042,6 +1045,9 @@ async function main() {
 
   client.once('clientReady', () => {
     console.log(`🤖 Logged in as ${client.user.tag}`);
+    console.log(`🔍 Reaction role configured for message: ${REACTION_ROLE_MESSAGE_ID}`);
+    console.log(`👑 Reader role ID: ${READER_ROLE_ID}`);
+    console.log(`🏰 Guild ID: ${DISCORD_GUILD_ID}`);
     logEvent('info', 'bot_ready', 'Bot logged in', {
       userTag: client.user.tag,
       rCooldownUserMs,
@@ -2367,9 +2373,10 @@ async function main() {
     }
   });
 
-  // Reaction role handler for reader role
-  const REACTION_ROLE_MESSAGE_ID = '1459463175370965194';
-  const READER_ROLE_ID = '1261096495860682873';
+  // Global reaction counter for debugging
+  client.on('messageReactionAdd', async (reaction, user) => {
+    console.log(`🔥 ANY REACTION: ${reaction.emoji.name} by ${user.tag} (${user.id}) on message ${reaction.message.id} in guild ${reaction.message.guild?.id}`);
+  });
 
   client.on('messageReactionAdd', async (reaction, user) => {
     try {
