@@ -487,7 +487,11 @@ const awardXpCommand = new SlashCommandBuilder()
 
 const totalFpCommand = new SlashCommandBuilder()
   .setName('totalfp')
-  .setDescription('Check your current fate points');
+  .setDescription('Show your current fate points');
+
+const readerRoleCommand = new SlashCommandBuilder()
+  .setName('reader')
+  .setDescription('Get the reader role for accessing server content');
 
 const useFpCommand = new SlashCommandBuilder()
   .setName('fp')
@@ -518,6 +522,7 @@ async function registerCommands() {
       awardXpCommand.toJSON(),
       totalFpCommand.toJSON(),
       useFpCommand.toJSON(),
+      readerRoleCommand.toJSON(),
     ],
   });
 }
@@ -2022,6 +2027,36 @@ async function main() {
           reason: reason || null,
         });
         return;
+      }
+
+      if (interaction.commandName === 'reader') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        try {
+          const member = interaction.member;
+          if (!member || typeof member.roles?.cache?.has !== 'function') {
+            await interaction.editReply('Could not resolve your server roles.');
+            return;
+          }
+
+          if (member.roles.cache.has(READER_ROLE_ID)) {
+            await interaction.editReply('You already have the reader role!');
+            return;
+          }
+
+          await member.roles.add(READER_ROLE_ID, 'Reader role requested via command');
+          await interaction.editReply('✅ Reader role has been assigned to you! You can now access server content.');
+          
+          console.log(`Reader role assigned to ${interaction.user.tag} (${interaction.user.id}) via command`);
+          logEvent('info', 'reader_role_assigned', 'Reader role assigned via command', {
+            userId: interaction.user.id,
+            username: interaction.user.tag,
+          });
+          return;
+        } catch (error) {
+          console.error('Reader role command error:', error);
+          await interaction.editReply('Failed to assign reader role. The bot may not have sufficient permissions.');
+          return;
+        }
       }
     
       // Unknown command
