@@ -493,6 +493,10 @@ const readerRoleCommand = new SlashCommandBuilder()
   .setName('reader')
   .setDescription('Get the reader role for accessing server content');
 
+const testCommand = new SlashCommandBuilder()
+  .setName('test')
+  .setDescription('Test command to check permissions');
+
 const useFpCommand = new SlashCommandBuilder()
   .setName('fp')
   .setDescription('Use 1 fate point (subtracts from your total)');
@@ -523,6 +527,7 @@ async function registerCommands() {
       totalFpCommand.toJSON(),
       useFpCommand.toJSON(),
       readerRoleCommand.toJSON(),
+      testCommand.toJSON(),
     ],
   });
 }
@@ -2057,6 +2062,11 @@ async function main() {
           await interaction.editReply('Failed to assign reader role. The bot may not have sufficient permissions.');
           return;
         }
+      }
+
+      if (interaction.commandName === 'test') {
+        await interaction.reply({ content: '✅ Test command works! You can use slash commands.', flags: MessageFlags.Ephemeral });
+        return;
       }
     
       // Unknown command
