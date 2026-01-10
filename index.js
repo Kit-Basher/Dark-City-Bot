@@ -493,10 +493,6 @@ const readerRoleCommand = new SlashCommandBuilder()
   .setName('reader')
   .setDescription('Get the reader role for accessing server content');
 
-const testCommand = new SlashCommandBuilder()
-  .setName('test')
-  .setDescription('Test command to check permissions');
-
 const useFpCommand = new SlashCommandBuilder()
   .setName('fp')
   .setDescription('Use 1 fate point (subtracts from your total)');
@@ -527,7 +523,6 @@ async function registerCommands() {
       totalFpCommand.toJSON(),
       useFpCommand.toJSON(),
       readerRoleCommand.toJSON(),
-      testCommand.toJSON(),
     ],
   });
 }
@@ -2063,11 +2058,6 @@ async function main() {
           return;
         }
       }
-
-      if (interaction.commandName === 'test') {
-        await interaction.reply({ content: '✅ Test command works! You can use slash commands.', flags: MessageFlags.Ephemeral });
-        return;
-      }
     
       // Unknown command
     } catch (error) {
@@ -2455,71 +2445,6 @@ async function main() {
       }
     } catch (error) {
       console.error('Message reader command error:', error);
-    }
-  });
-
-  // Global reaction counter for debugging
-  client.on('messageReactionAdd', async (reaction, user) => {
-    console.log(`🔥 ANY REACTION: ${reaction.emoji.name} by ${user.tag} (${user.id}) on message ${reaction.message.id} in guild ${reaction.message.guild?.id}`);
-  });
-
-  client.on('messageReactionAdd', async (reaction, user) => {
-    try {
-      console.log(`Reaction detected: ${reaction.emoji.name} by ${user.tag} (${user.id}) on message ${reaction.message.id}`);
-      
-      // Only process reactions in the correct guild
-      if (!reaction.message.guild || reaction.message.guild.id !== DISCORD_GUILD_ID) {
-        console.log(`Ignoring reaction - wrong guild. Expected: ${DISCORD_GUILD_ID}, Got: ${reaction.message.guild?.id}`);
-        return;
-      }
-      
-      // Only process reactions to the specific message
-      if (reaction.message.id !== REACTION_ROLE_MESSAGE_ID) {
-        console.log(`Ignoring reaction - wrong message. Expected: ${REACTION_ROLE_MESSAGE_ID}, Got: ${reaction.message.id}`);
-        return;
-      }
-      
-      // Ignore bot reactions
-      if (user.bot) {
-        console.log(`Ignoring bot reaction from ${user.tag}`);
-        return;
-      }
-      
-      console.log(`Processing reaction role for ${user.tag} (${user.id})`);
-      
-      // Get the member who reacted
-      const member = await reaction.message.guild.members.fetch(user.id).catch(() => null);
-      if (!member) {
-        console.error(`Could not fetch member for user ${user.id}`);
-        return;
-      }
-      
-      console.log(`Fetched member: ${member.user.tag}, current roles: ${member.roles.cache.map(r => r.id).join(', ')}`);
-      
-      // Check if they already have the reader role
-      if (member.roles.cache.has(READER_ROLE_ID)) {
-        console.log(`User ${user.tag} already has reader role`);
-        return;
-      }
-      
-      // Add the reader role
-      await member.roles.add(READER_ROLE_ID, 'Reaction role assignment');
-      
-      console.log(`✅ Added reader role to ${user.tag} (${user.id})`);
-      logEvent('info', 'reaction_role_added', 'Reader role assigned via reaction', {
-        userId: user.id,
-        username: user.tag,
-        roleId: READER_ROLE_ID,
-        messageId: REACTION_ROLE_MESSAGE_ID,
-      });
-      
-    } catch (error) {
-      console.error('❌ Reaction role handler error:', error);
-      logEvent('error', 'reaction_role_error', error?.message || String(error), {
-        userId: user?.id,
-        messageId: reaction.message?.id,
-        stack: error?.stack,
-      });
     }
   });
 
