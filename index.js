@@ -480,6 +480,14 @@ const awardXpCommand = new SlashCommandBuilder()
       .setMaxValue(100000)
   );
 
+const totalFpCommand = new SlashCommandBuilder()
+  .setName('totalfp')
+  .setDescription('Check your current fate points');
+
+const useFpCommand = new SlashCommandBuilder()
+  .setName('fp')
+  .setDescription('Use 1 fate point (subtracts from your total)');
+
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(DISCORD_BOT_TOKEN);
   await rest.put(Routes.applicationGuildCommands(DISCORD_APPLICATION_ID, DISCORD_GUILD_ID), {
@@ -503,6 +511,8 @@ async function registerCommands() {
       cardCommand.toJSON(),
       linkCharacterCommand.toJSON(),
       awardXpCommand.toJSON(),
+      totalFpCommand.toJSON(),
+      useFpCommand.toJSON(),
     ],
   });
 }
@@ -1470,6 +1480,76 @@ async function main() {
           await interaction.editReply(`Failed to fetch card: ${e?.message || String(e)}`);
           return;
         }
+      }
+
+      if (interaction.commandName === 'totalfp') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        try {
+          const discordUserId = interaction.user?.id;
+          if (!discordUserId) {
+            await interaction.editReply('Could not resolve your Discord user ID.');
+            return;
+          }
+
+          const result = await darkCityApiRequest(`/api/characters/discord/by-user/${discordUserId}`);
+          if (!result || !result.character) {
+            await interaction.editReply('No approved character found linked to your account.');
+            return;
+          }
+
+          const fatePoints = result.character.fatePoints || 0;
+          const characterName = result.character.name || 'Unknown';
+          await interaction.editReply(`**${characterName}** has **${fatePoints}** fate points.`);
+        } catch (e) {
+          await interaction.editReply(`Failed to fetch fate points: ${e?.message || String(e)}`);
+        }
+        return;
+      }
+
+      if (interaction.commandName === 'fp') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        try {
+          const discordUserId = interaction.user?.id;
+          if (!discordUserId) {
+            await interaction.editReply('Could not resolve your Discord user ID.');
+            return;
+          }
+
+          const result = await darkCityApiRequest(`/api/characters/discord/by-user/${discordUserId}`);
+          if (!result || !result.character) {
+            await interaction.editReply('No approved character found linked to your account.');
+            return;
+          }
+
+          const currentFp = result.character.fatePoints || 0;
+          if (currentFp <= 0) {
+            await interaction.editReply('You have no fate points remaining!');
+            return;
+          }
+
+          // Update fate points by calling the character update API
+          const updateResult = await darkCityApiRequest('/api/characters/discord/update-fate-points', {
+            method: 'POST',
+            body: JSON.stringify({ 
+              discordUserId: discordUserId, 
+              fatePoints: currentFp - 1 
+            }),
+          });
+
+          if (updateResult && updateResult.success) {
+            await interaction.editReply(`Used 1 fate point. You now have **${currentFp - 1}** fate points remaining.`);
+            logEvent('info', 'fate_point_used', 'User spent 1 fate point', {
+              userId: discordUserId,
+              previousFp: currentFp,
+              newFp: currentFp - 1
+            });
+          } else {
+            await interaction.editReply('Failed to update fate points. Please try again.');
+          }
+        } catch (e) {
+          await interaction.editReply(`Failed to use fate point: ${e?.message || String(e)}`);
+        }
+        return;
       }
 
       if (interaction.commandName === 'linkcharacter') {
