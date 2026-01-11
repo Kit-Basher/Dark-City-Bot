@@ -546,9 +546,6 @@ function assertGameApiConfigured() {
   if (!DARK_CITY_API_BASE_URL) {
     throw new Error('DARK_CITY_API_BASE_URL is not set');
   }
-  if (!DARK_CITY_MODERATOR_PASSWORD) {
-    throw new Error('DARK_CITY_MODERATOR_PASSWORD is not set');
-  }
 }
 
 async function darkCityApiRequest(path, opts) {
@@ -556,7 +553,6 @@ async function darkCityApiRequest(path, opts) {
   const url = `${DARK_CITY_API_BASE_URL}${path}`;
   const headers = {
     'Content-Type': 'application/json',
-    'x-moderator-password': DARK_CITY_MODERATOR_PASSWORD,
     ...(opts?.headers || {}),
   };
   const res = await fetch(url, { ...opts, headers });
