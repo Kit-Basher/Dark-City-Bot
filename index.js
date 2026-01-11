@@ -34,7 +34,6 @@ const DEFAULT_R_COOLDOWN_USER_MS = parseInt(process.env.R_COOLDOWN_USER_MS || '3
 const DEFAULT_R_COOLDOWN_CHANNEL_MS = parseInt(process.env.R_COOLDOWN_CHANNEL_MS || '1000', 10);
 
 const DARK_CITY_API_BASE_URL = String(process.env.DARK_CITY_API_BASE_URL || '').trim().replace(/\/$/, '');
-const DARK_CITY_MODERATOR_PASSWORD = String(process.env.DARK_CITY_MODERATOR_PASSWORD || '').trim();
 
 let rCooldownUserMs = DEFAULT_R_COOLDOWN_USER_MS;
 let rCooldownChannelMs = DEFAULT_R_COOLDOWN_CHANNEL_MS;
@@ -910,12 +909,15 @@ function hasModPermission(member) {
   if (!member) return false;
 
   try {
-    if (MODERATOR_ROLE_ID) {
-      const roles = member.roles;
-      if (roles?.cache?.has?.(MODERATOR_ROLE_ID)) return true;
-      if (Array.isArray(roles) && roles.includes(MODERATOR_ROLE_ID)) return true;
-      return false;
-    }
+    // Use the hardcoded role IDs from the memory system
+    const MODERATOR_ROLE_ID = '1261096385277722666';
+    const ADMIN_ROLE_ID = '1261095707494842519';
+    
+    const roles = member.roles;
+    if (roles?.cache?.has?.(MODERATOR_ROLE_ID)) return true;
+    if (roles?.cache?.has?.(ADMIN_ROLE_ID)) return true;
+    if (Array.isArray(roles) && (roles.includes(MODERATOR_ROLE_ID) || roles.includes(ADMIN_ROLE_ID))) return true;
+    return false;
   } catch {
     // ignore
   }
@@ -935,6 +937,11 @@ function hasWriterOrModPermission(member) {
   if (!member) return false;
 
   try {
+    // Use hardcoded role IDs from memory system
+    const WRITER_ROLE_ID = process.env.WRITER_ROLE_ID;
+    const MODERATOR_ROLE_ID = '1261096385277722666';
+    const ADMIN_ROLE_ID = '1261095707494842519';
+    
     const roles = member.roles;
     
     // Check for writer role
@@ -943,22 +950,12 @@ function hasWriterOrModPermission(member) {
       if (Array.isArray(roles) && roles.includes(WRITER_ROLE_ID)) return true;
     }
     
-    // Check for moderator role
-    if (MODERATOR_ROLE_ID) {
-      if (roles?.cache?.has?.(MODERATOR_ROLE_ID)) return true;
-      if (Array.isArray(roles) && roles.includes(MODERATOR_ROLE_ID)) return true;
-    }
+    // Check for moderator or admin roles
+    if (roles?.cache?.has?.(MODERATOR_ROLE_ID)) return true;
+    if (roles?.cache?.has?.(ADMIN_ROLE_ID)) return true;
+    if (Array.isArray(roles) && (roles.includes(MODERATOR_ROLE_ID) || roles.includes(ADMIN_ROLE_ID))) return true;
     
-    // Check for Discord permissions
-    const perms = member.permissions;
-    if (perms) {
-      return (
-        perms.has(PermissionsBitField.Flags.Administrator) ||
-        perms.has(PermissionsBitField.Flags.ManageGuild) ||
-        perms.has(PermissionsBitField.Flags.ManageMessages) ||
-        perms.has(PermissionsBitField.Flags.ModerateMembers)
-      );
-    }
+    return false;
   } catch {
     // ignore
   }
