@@ -913,7 +913,7 @@ app.post('/dashboard/quiz-config', requireLogin, async (req, res) => {
       return res.redirect('/dashboard?error=' + encodeURIComponent('Invalid config payload'));
     }
 
-    await darkCityApiRequest('/api/quiz/config', {
+    await darkCityApiRequest('/api/quiz/config-bypass', {
       method: 'PUT',
       body: JSON.stringify(parsed),
     }, req);
