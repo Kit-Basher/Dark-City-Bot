@@ -655,6 +655,7 @@ async function darkCityApiRequest(path, opts, req) {
   console.log(`[API] Method: ${opts?.method || 'GET'}`);
   console.log(`[API] User authenticated: ${Boolean(req.session?.user?.accessToken)}`);
   console.log(`[API] User ID: ${req.session?.user?.id}`);
+  console.log(`[API] Token preview: ${req.session?.user?.accessToken?.slice(0, 20)}...`);
   
   const res = await fetch(url, { ...opts, headers });
   const text = await res.text();
@@ -805,6 +806,27 @@ app.get('/quiz', requireLogin, (req, res) => {
     console.log('[QUIZ] API configured:', Boolean(DARK_CITY_API_BASE_URL));
     console.log('[QUIZ] User session exists:', Boolean(req.session?.user));
     console.log('[QUIZ] Access token exists:', Boolean(req.session?.user?.accessToken));
+
+    // Test the Discord token directly
+    if (req.session?.user?.accessToken) {
+      try {
+        console.log('[QUIZ] Testing Discord token...');
+        const discordResponse = await fetch('https://discord.com/api/v10/users/@me', {
+          headers: {
+            'Authorization': `Bearer ${req.session.user.accessToken}`
+          }
+        });
+        console.log('[QUIZ] Discord token test status:', discordResponse.status);
+        if (discordResponse.ok) {
+          const discordUser = await discordResponse.json();
+          console.log('[QUIZ] Discord token valid for user:', discordUser.username);
+        } else {
+          console.log('[QUIZ] Discord token invalid - status:', discordResponse.status);
+        }
+      } catch (error) {
+        console.log('[QUIZ] Discord token test error:', error.message);
+      }
+    }
 
     if (ok) {
       try {
