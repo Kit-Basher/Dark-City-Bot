@@ -649,14 +649,25 @@ async function darkCityApiRequest(path, opts) {
     'x-moderator-password': DARK_CITY_MODERATOR_PASSWORD,
     ...(opts?.headers || {}),
   };
+  
+  console.log(`[API] Making request to: ${url}`);
+  console.log(`[API] Method: ${opts?.method || 'GET'}`);
+  console.log(`[API] Moderator password configured: ${Boolean(DARK_CITY_MODERATOR_PASSWORD)}`);
+  
   const res = await fetch(url, { ...opts, headers });
   const text = await res.text();
+  
+  console.log(`[API] Response status: ${res.status}`);
+  console.log(`[API] Response text length: ${text.length}`);
+  console.log(`[API] Response text preview: ${text.slice(0, 200)}`);
+  
   let json;
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
     json = null;
   }
+  
   if (!res.ok) {
     const preview = (text || '').slice(0, 300);
     const msg = json?.error || json?.message || preview || `HTTP ${res.status}`;
@@ -665,6 +676,8 @@ async function darkCityApiRequest(path, opts) {
     err.url = url;
     throw err;
   }
+  
+  console.log(`[API] Parsed JSON: ${json ? 'success' : 'null'}`);
   return json;
 }
 
@@ -788,10 +801,16 @@ app.get('/quiz', requireLogin, (req, res) => {
     if (ok) {
       try {
         const cfg = await darkCityApiRequest('/api/quiz/config', { method: 'GET' });
-        quizConfigJson = JSON.stringify(cfg, null, 2);
+        if (cfg === null) {
+          quizLoadError = 'API returned null response - check moderator password configuration';
+        } else {
+          quizConfigJson = JSON.stringify(cfg, null, 2);
+        }
       } catch (e) {
         quizLoadError = e?.message || String(e);
       }
+    } else {
+      quizLoadError = 'Game API not configured - set DARK_CITY_API_BASE_URL and DARK_CITY_MODERATOR_PASSWORD';
     }
 
     res.send(
