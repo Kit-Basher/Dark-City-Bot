@@ -646,23 +646,12 @@ async function darkCityApiRequest(path, opts, req) {
   const url = joinGameApiUrl(path);
   const headers = {
     'Content-Type': 'application/json',
-    // Use Discord OAuth token instead of moderator password
     'Authorization': `Bearer ${req.session?.user?.accessToken}`,
     ...(opts?.headers || {}),
   };
   
-  console.log(`[API] Making request to: ${url}`);
-  console.log(`[API] Method: ${opts?.method || 'GET'}`);
-  console.log(`[API] User authenticated: ${Boolean(req.session?.user?.accessToken)}`);
-  console.log(`[API] User ID: ${req.session?.user?.id}`);
-  console.log(`[API] Token preview: ${req.session?.user?.accessToken?.slice(0, 20)}...`);
-  
   const res = await fetch(url, { ...opts, headers });
   const text = await res.text();
-  
-  console.log(`[API] Response status: ${res.status}`);
-  console.log(`[API] Response text length: ${text.length}`);
-  console.log(`[API] Response text preview: ${text.slice(0, 200)}`);
   
   let json;
   try {
@@ -680,7 +669,6 @@ async function darkCityApiRequest(path, opts, req) {
     throw err;
   }
   
-  console.log(`[API] Parsed JSON: ${json ? 'success' : 'null'}`);
   return json;
 }
 
@@ -802,45 +790,15 @@ app.get('/quiz', requireLogin, (req, res) => {
     let quizConfigJson = '';
     let quizLoadError = '';
 
-    console.log('[QUIZ] Starting quiz config load...');
-    console.log('[QUIZ] API configured:', Boolean(DARK_CITY_API_BASE_URL));
-    console.log('[QUIZ] User session exists:', Boolean(req.session?.user));
-    console.log('[QUIZ] Access token exists:', Boolean(req.session?.user?.accessToken));
-
-    // Test the Discord token directly
-    if (req.session?.user?.accessToken) {
-      try {
-        console.log('[QUIZ] Testing Discord token...');
-        const discordResponse = await fetch('https://discord.com/api/v10/users/@me', {
-          headers: {
-            'Authorization': `Bearer ${req.session.user.accessToken}`
-          }
-        });
-        console.log('[QUIZ] Discord token test status:', discordResponse.status);
-        if (discordResponse.ok) {
-          const discordUser = await discordResponse.json();
-          console.log('[QUIZ] Discord token valid for user:', discordUser.username);
-        } else {
-          console.log('[QUIZ] Discord token invalid - status:', discordResponse.status);
-        }
-      } catch (error) {
-        console.log('[QUIZ] Discord token test error:', error.message);
-      }
-    }
-
     if (ok) {
       try {
-        console.log('[QUIZ] Making API call...');
         const cfg = await darkCityApiRequest('/api/quiz/config', { method: 'GET' }, req);
-        console.log('[QUIZ] API response:', cfg ? 'success' : 'null');
         if (cfg === null) {
           quizLoadError = 'API returned null response - check Discord OAuth authentication';
         } else {
           quizConfigJson = JSON.stringify(cfg, null, 2);
-          console.log('[QUIZ] Config loaded successfully, length:', quizConfigJson.length);
         }
       } catch (e) {
-        console.error('[QUIZ] API call failed:', e);
         quizLoadError = e?.message || String(e);
       }
     } else {
