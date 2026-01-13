@@ -795,21 +795,30 @@ app.get('/dashboard', requireLogin, (req, res) => {
 app.get('/quiz', requireLogin, (req, res) => {
   const saved = req.query?.saved === '1';
   const error = typeof req.query?.error === 'string' ? req.query.error : '';
-  const ok = Boolean(DARK_CITY_API_BASE_URL && DARK_CITY_MODERATOR_PASSWORD);
+  const ok = Boolean(DARK_CITY_API_BASE_URL);
 
   (async () => {
     let quizConfigJson = '';
     let quizLoadError = '';
 
+    console.log('[QUIZ] Starting quiz config load...');
+    console.log('[QUIZ] API configured:', Boolean(DARK_CITY_API_BASE_URL));
+    console.log('[QUIZ] User session exists:', Boolean(req.session?.user));
+    console.log('[QUIZ] Access token exists:', Boolean(req.session?.user?.accessToken));
+
     if (ok) {
       try {
+        console.log('[QUIZ] Making API call...');
         const cfg = await darkCityApiRequest('/api/quiz/config', { method: 'GET' }, req);
+        console.log('[QUIZ] API response:', cfg ? 'success' : 'null');
         if (cfg === null) {
           quizLoadError = 'API returned null response - check Discord OAuth authentication';
         } else {
           quizConfigJson = JSON.stringify(cfg, null, 2);
+          console.log('[QUIZ] Config loaded successfully, length:', quizConfigJson.length);
         }
       } catch (e) {
+        console.error('[QUIZ] API call failed:', e);
         quizLoadError = e?.message || String(e);
       }
     } else {
