@@ -734,6 +734,7 @@ app.get('/auth/discord/callback', async (req, res) => {
       global_name: user?.global_name,
       allowed,
       roles,
+      accessToken, // Store the access token for API calls
     };
 
     if (!allowed) {
