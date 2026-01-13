@@ -567,7 +567,7 @@ app.post('/xp/reset', requireLogin, async (req, res) => {
     await darkCityApiRequest('/api/characters/discord/set-xp', {
       method: 'POST',
       body: JSON.stringify({ discordUserId, xp: 0 }),
-    });
+    }, req);
 
     res.redirect('/xp');
   } catch (error) {
@@ -641,18 +641,20 @@ function joinGameApiUrl(path) {
   return `${base}${p}`;
 }
 
-async function darkCityApiRequest(path, opts) {
+async function darkCityApiRequest(path, opts, req) {
   assertGameApiConfigured();
   const url = joinGameApiUrl(path);
   const headers = {
     'Content-Type': 'application/json',
-    'x-moderator-password': DARK_CITY_MODERATOR_PASSWORD,
+    // Use Discord OAuth token instead of moderator password
+    'Authorization': `Bearer ${req.session?.user?.accessToken}`,
     ...(opts?.headers || {}),
   };
   
   console.log(`[API] Making request to: ${url}`);
   console.log(`[API] Method: ${opts?.method || 'GET'}`);
-  console.log(`[API] Moderator password configured: ${Boolean(DARK_CITY_MODERATOR_PASSWORD)}`);
+  console.log(`[API] User authenticated: ${Boolean(req.session?.user?.accessToken)}`);
+  console.log(`[API] User ID: ${req.session?.user?.id}`);
   
   const res = await fetch(url, { ...opts, headers });
   const text = await res.text();
@@ -800,9 +802,9 @@ app.get('/quiz', requireLogin, (req, res) => {
 
     if (ok) {
       try {
-        const cfg = await darkCityApiRequest('/api/quiz/config', { method: 'GET' });
+        const cfg = await darkCityApiRequest('/api/quiz/config', { method: 'GET' }, req);
         if (cfg === null) {
-          quizLoadError = 'API returned null response - check moderator password configuration';
+          quizLoadError = 'API returned null response - check Discord OAuth authentication';
         } else {
           quizConfigJson = JSON.stringify(cfg, null, 2);
         }
@@ -810,7 +812,7 @@ app.get('/quiz', requireLogin, (req, res) => {
         quizLoadError = e?.message || String(e);
       }
     } else {
-      quizLoadError = 'Game API not configured - set DARK_CITY_API_BASE_URL and DARK_CITY_MODERATOR_PASSWORD';
+      quizLoadError = 'Game API not configured - set DARK_CITY_API_BASE_URL';
     }
 
     res.send(
@@ -924,7 +926,7 @@ app.post('/dashboard/quiz-config', requireLogin, async (req, res) => {
     await darkCityApiRequest('/api/quiz/config', {
       method: 'PUT',
       body: JSON.stringify(parsed),
-    });
+    }, req);
 
     res.redirect('/quiz?saved=1');
   } catch (error) {
