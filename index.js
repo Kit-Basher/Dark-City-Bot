@@ -34,6 +34,7 @@ const DEFAULT_R_COOLDOWN_USER_MS = parseInt(process.env.R_COOLDOWN_USER_MS || '3
 const DEFAULT_R_COOLDOWN_CHANNEL_MS = parseInt(process.env.R_COOLDOWN_CHANNEL_MS || '1000', 10);
 
 const DARK_CITY_API_BASE_URL = String(process.env.DARK_CITY_API_BASE_URL || '').trim().replace(/\/$/, '');
+const DARK_CITY_API_KEY = String(process.env.DARK_CITY_API_KEY || '').trim();
 
 let rCooldownUserMs = DEFAULT_R_COOLDOWN_USER_MS;
 let rCooldownChannelMs = DEFAULT_R_COOLDOWN_CHANNEL_MS;
@@ -543,6 +544,7 @@ async function darkCityApiRequest(path, opts) {
   const url = `${DARK_CITY_API_BASE_URL}${path}`;
   const headers = {
     'Content-Type': 'application/json',
+    ...(DARK_CITY_API_KEY && { 'Authorization': `Bearer ${DARK_CITY_API_KEY}` }),
     ...(opts?.headers || {}),
   };
   const res = await fetch(url, { ...opts, headers });
@@ -1657,7 +1659,7 @@ async function main() {
             return;
           }
 
-          await darkCityApiRequest('/api/characters/discord/link', {
+          await darkCityApiRequest('/api/characters/discord/link-bot', {
             method: 'POST',
             body: JSON.stringify({ discordUserId, characterName }),
           });
