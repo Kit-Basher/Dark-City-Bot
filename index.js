@@ -924,6 +924,26 @@ function hasModPermission(member) {
   );
 }
 
+function hasWriterPermission(member) {
+  if (!member) return false;
+
+  try {
+    const WRITER_ROLE_ID = process.env.WRITER_ROLE_ID;
+    const roles = member.roles;
+    
+    if (WRITER_ROLE_ID) {
+      if (roles?.cache?.has?.(WRITER_ROLE_ID)) return true;
+      if (Array.isArray(roles) && roles.includes(WRITER_ROLE_ID)) return true;
+    }
+    
+    return false;
+  } catch {
+    // ignore
+  }
+
+  return false;
+}
+
 function hasWriterOrModPermission(member) {
   if (!member) return false;
 
@@ -959,6 +979,14 @@ async function requireModerator(interaction) {
   const allowed = hasModPermission(member);
   if (allowed) return true;
   await interaction.reply({ content: 'Access denied (mods only).', flags: MessageFlags.Ephemeral });
+  return false;
+}
+
+async function requireWriter(interaction) {
+  const member = interaction.member;
+  const allowed = hasWriterPermission(member);
+  if (allowed) return true;
+  await interaction.reply({ content: 'Access denied (writers only).', flags: MessageFlags.Ephemeral });
   return false;
 }
 
@@ -1184,7 +1212,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'statusreport') {
-        if (!(await requireWriterOrMod(interaction))) return;
+        if (!(await requireModerator(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const { apiBase, mapBase, dashBase } = getConfiguredUrls();
@@ -1238,7 +1266,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'fullreport') {
-        if (!(await requireWriterOrMod(interaction))) return;
+        if (!(await requireModerator(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const { apiBase, mapBase, dashBase } = getConfiguredUrls();
@@ -1500,7 +1528,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'card') {
-        if (!(await requireWriterOrMod(interaction))) return;
+        if (!(await requireWriter(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           const discordUserId = interaction.user?.id;
@@ -1539,7 +1567,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'fp') {
-        if (!(await requireWriterOrMod(interaction))) return;
+        if (!(await requireWriter(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           const amountStr = interaction.options.getString('amount', false);
@@ -1614,7 +1642,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'linkcharacter') {
-        if (!(await requireWriterOrMod(interaction))) return;
+        if (!(await requireWriter(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           const characterName = getNicknameCharacterName(interaction.member);
@@ -1643,7 +1671,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'awardxp') {
-        if (!(await requireWriterOrMod(interaction))) return;
+        if (!(await requireModerator(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           const user = interaction.options.getUser('user', true);
@@ -1675,6 +1703,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'r') {
+        if (!(await requireWriter(interaction))) return;
         const now = Date.now();
         const userId = interaction.user?.id;
         const channelId = interaction.channelId;
@@ -1711,6 +1740,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'rskill') {
+        if (!(await requireWriter(interaction))) return;
         const now = Date.now();
         const userId = interaction.user?.id;
         const channelId = interaction.channelId;
@@ -1815,6 +1845,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'start') {
+        if (!(await requireWriter(interaction))) return;
         const channelId = interaction.channelId;
         const playersString = interaction.options.getString('players', true);
         const dateString = interaction.options.getString('date', false);
@@ -1931,6 +1962,7 @@ async function main() {
       }
 
       if (interaction.commandName === 'end') {
+        if (!(await requireWriter(interaction))) return;
         const channelId = interaction.channelId;
 
         // Check if there's an active scene in this channel
