@@ -64,12 +64,12 @@ let spamBypassRoleIds = [];
 let aspectsEnabled = true;
 let aspectsMaxSelected = 2;
 
-let xpEnabled = false;
-let xpPerMessage = 1;
-let xpCooldownSeconds = 60;
+let xpEnabled = true;
+let xpPerMessage = 2;
+let xpCooldownSeconds = 90;
 let xpMinMessageChars = 20;
 /** @type {string[]} */
-let xpAllowedChannelIds = [];
+let xpAllowedChannelIds = ['1277143669601992764']; // Districts category ID
 
 const BOT_HEARTBEAT_ENABLED = String(process.env.BOT_HEARTBEAT_ENABLED || 'true').trim().toLowerCase() !== 'false';
 const BOT_HEARTBEAT_INTERVAL_SECONDS = parseInt(process.env.BOT_HEARTBEAT_INTERVAL_SECONDS || '30', 10);
@@ -324,11 +324,11 @@ async function ensureSettingsDoc() {
         aspectsEnabled: true,
         aspectsMaxSelected: 2,
 
-        xpEnabled: false,
-        xpPerMessage: 1,
-        xpCooldownSeconds: 60,
+        xpEnabled: true,
+        xpPerMessage: 2,
+        xpCooldownSeconds: 90,
         xpMinMessageChars: 20,
-        xpAllowedChannelIds: [],
+        xpAllowedChannelIds: ['1277143669601992764'], // Districts category ID
         createdAt: new Date(),
       },
     },
@@ -485,22 +485,15 @@ const awardXpCommand = new SlashCommandBuilder()
       .setMaxValue(100000)
   );
 
-const totalFpCommand = new SlashCommandBuilder()
-  .setName('totalfp')
-  .setDescription('Show current fate points (writers and mods only)');
-
 const readerRoleCommand = new SlashCommandBuilder()
   .setName('reader')
   .setDescription('Get the reader role for accessing server content');
 
-const useFpCommand = new SlashCommandBuilder()
+const fpCommand = new SlashCommandBuilder()
   .setName('fp')
-  .setDescription('Use 1 fate point (writers and mods only)');
-
-const addFpCommand = new SlashCommandBuilder()
-  .setName('fpup')
-  .setDescription('Add 1 fate point (writers and mods only)')
-  .addUserOption((opt) => opt.setName('user').setDescription('User to add fate point to (defaults to yourself)').setRequired(false));
+  .setDescription('Show, add, or subtract fate points (writers and mods only)')
+  .addStringOption((opt) => opt.setName('amount').setDescription('Amount (e.g., +1, -1, or leave empty to show)').setRequired(false))
+  .addUserOption((opt) => opt.setName('user').setDescription('User to modify (defaults to yourself)').setRequired(false));
 
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(DISCORD_BOT_TOKEN);
@@ -525,9 +518,7 @@ async function registerCommands() {
       cardCommand.toJSON(),
       linkCharacterCommand.toJSON(),
       awardXpCommand.toJSON(),
-      totalFpCommand.toJSON(),
-      useFpCommand.toJSON(),
-      addFpCommand.toJSON(),
+      fpCommand.toJSON(),
       readerRoleCommand.toJSON(),
     ],
   });
@@ -1031,8 +1022,14 @@ function isXpAllowedChannel(message) {
 
   const channelId = ch?.id;
   const parentId = ch?.parentId;
+  // Check direct channel or parent category
   if (channelId && xpAllowedChannelIds.includes(channelId)) return true;
   if (parentId && xpAllowedChannelIds.includes(parentId)) return true;
+  // Check if the channel's parent category matches the Districts category
+  if (ch?.guild?.channels?.cache) {
+    const channel = ch.guild.channels.cache.get(channelId);
+    if (channel?.parentId && xpAllowedChannelIds.includes(channel.parentId)) return true;
+  }
   return false;
 }
 
@@ -1541,82 +1538,11 @@ async function main() {
         }
       }
 
-      if (interaction.commandName === 'totalfp') {
-        if (!(await requireWriterOrMod(interaction))) return;
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        try {
-          const discordUserId = interaction.user?.id;
-          if (!discordUserId) {
-            await interaction.editReply('Could not resolve your Discord user ID.');
-            return;
-          }
-
-          const result = await darkCityApiRequest(`/api/characters/discord/by-user/${discordUserId}`);
-          if (!result || !result.character) {
-            await interaction.editReply('No approved character found linked to your account.');
-            return;
-          }
-
-          const fatePoints = result.character.fatePoints || 0;
-          const characterName = result.character.name || 'Unknown';
-          await interaction.editReply(`**${characterName}** has **${fatePoints}** fate points.`);
-        } catch (e) {
-          await interaction.editReply(`Failed to fetch fate points: ${e?.message || String(e)}`);
-        }
-        return;
-      }
-
       if (interaction.commandName === 'fp') {
         if (!(await requireWriterOrMod(interaction))) return;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
-          const discordUserId = interaction.user?.id;
-          if (!discordUserId) {
-            await interaction.editReply('Could not resolve your Discord user ID.');
-            return;
-          }
-
-          const result = await darkCityApiRequest(`/api/characters/discord/by-user/${discordUserId}`);
-          if (!result || !result.character) {
-            await interaction.editReply('No approved character found linked to your account.');
-            return;
-          }
-
-          const currentFp = result.character.fatePoints || 0;
-          if (currentFp <= 0) {
-            await interaction.editReply('You have no fate points remaining!');
-            return;
-          }
-
-          // Update fate points by calling the character update API
-          const updateResult = await darkCityApiRequest('/api/characters/discord/update-fate-points', {
-            method: 'POST',
-            body: JSON.stringify({ 
-              discordUserId: discordUserId, 
-              fatePoints: currentFp - 1 
-            }),
-          });
-
-          if (updateResult && updateResult.success) {
-            await interaction.editReply(`Used 1 fate point. You now have **${currentFp - 1}** fate points remaining.`);
-            logEvent('info', 'fate_point_used', 'User spent 1 fate point', {
-              userId: discordUserId,
-              previousFp: currentFp,
-              newFp: currentFp - 1
-            });
-          } else {
-            await interaction.editReply('Failed to update fate points. Please try again.');
-          }
-        } catch (e) {
-          await interaction.editReply(`Failed to use fate point: ${e?.message || String(e)}`);
-        }
-        return;
-      }
-
-      if (interaction.commandName === 'fpup') {
-        if (!(await requireWriterOrMod(interaction))) return;
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        try {
+          const amountStr = interaction.options.getString('amount', false);
           const user = interaction.options.getUser('user', false);
           const discordUserId = user?.id || interaction.user?.id;
           
@@ -1632,8 +1558,29 @@ async function main() {
           }
 
           const currentFp = result.character.fatePoints || 0;
-          if (currentFp >= 5) {
-            await interaction.editReply('That character already has the maximum fate points (5).');
+          const characterName = result.character.name || 'Unknown';
+          let newFp = currentFp;
+          let action = '';
+
+          if (!amountStr) {
+            // Just display current fate points
+            await interaction.editReply(`**${characterName}** has **${currentFp}** fate points.`);
+            return;
+          }
+
+          // Parse +/- amount
+          const trimmed = amountStr.trim();
+          const match = trimmed.match(/^([+-]\d+)$/);
+          if (!match) {
+            await interaction.editReply('Invalid amount. Use format like `+1`, `-2`, or leave empty to show current fate points.');
+            return;
+          }
+
+          const delta = parseInt(match[1], 10);
+          newFp = Math.max(0, Math.min(5, currentFp + delta)); // Clamp 0-5
+
+          if (newFp === currentFp) {
+            await interaction.editReply(`No change. **${characterName}** still has **${currentFp}** fate points.`);
             return;
           }
 
@@ -1641,26 +1588,27 @@ async function main() {
           const updateResult = await darkCityApiRequest('/api/characters/discord/update-fate-points', {
             method: 'POST',
             body: JSON.stringify({ 
-              discordUserId: discordUserId, 
-              fatePoints: currentFp + 1 
+              discordUserId, 
+              fatePoints: newFp 
             }),
           });
 
           if (updateResult && updateResult.success) {
-            const characterName = result.character.name || 'Unknown';
             const targetUser = user ? `<@${user.id}>` : 'your';
-            await interaction.editReply(`Added 1 fate point to **${characterName}**. ${targetUser} now have **${currentFp + 1}** fate points.`);
-            logEvent('info', 'fate_point_added', 'User added 1 fate point', {
+            action = delta > 0 ? 'Added' : 'Removed';
+            await interaction.editReply(`${action} **${Math.abs(delta)}** fate point${Math.abs(delta) === 1 ? '' : 's'} to **${characterName}**. ${targetUser} now have **${newFp}** fate point${newFp === 1 ? '' : 's'}.`);
+            logEvent('info', 'fate_point_updated', 'User updated fate points', {
               userId: interaction.user?.id,
               targetUserId: discordUserId,
               previousFp: currentFp,
-              newFp: currentFp + 1
+              newFp,
+              delta
             });
           } else {
             await interaction.editReply('Failed to update fate points. Please try again.');
           }
         } catch (e) {
-          await interaction.editReply(`Failed to add fate point: ${e?.message || String(e)}`);
+          await interaction.editReply(`Failed to update fate points: ${e?.message || String(e)}`);
         }
         return;
       }
