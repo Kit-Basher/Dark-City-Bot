@@ -353,11 +353,11 @@ async function logEvent(level, event, message, meta) {
 }
 
 const rollCommand = new SlashCommandBuilder()
-  .setName('r')
+  .setName('roll')
   .setDescription('Roll 2d6');
 
 const rskillCommand = new SlashCommandBuilder()
-  .setName('rskill')
+  .setName('r')
   .setDescription('Roll 2d6 with character skill bonus')
   .addStringOption((opt) =>
     opt
@@ -1702,7 +1702,7 @@ async function main() {
         }
       }
 
-      if (interaction.commandName === 'r') {
+      if (interaction.commandName === 'roll') {
         if (!(await requireWriter(interaction))) return;
         const now = Date.now();
         const userId = interaction.user?.id;
@@ -1739,7 +1739,7 @@ async function main() {
         return;
       }
 
-      if (interaction.commandName === 'rskill') {
+      if (interaction.commandName === 'r') {
         if (!(await requireWriter(interaction))) return;
         const now = Date.now();
         const userId = interaction.user?.id;
