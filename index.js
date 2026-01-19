@@ -1052,14 +1052,39 @@ function isXpAllowedChannel(message) {
 
   const channelId = ch?.id;
   const parentId = ch?.parentId;
-  // Check direct channel or parent category
+  
+  // For threads, get the parent channel info
+  let threadParentId = null;
+  let threadParentCategoryId = null;
+  if (typeof ch.isThread === 'function' && ch.isThread() && ch.parent) {
+    threadParentId = ch.parent.id;
+    threadParentCategoryId = ch.parent.parentId;
+  }
+  
+  // Check direct channel ID
   if (channelId && xpAllowedChannelIds.includes(channelId)) return true;
+  
+  // Check direct parent category ID
   if (parentId && xpAllowedChannelIds.includes(parentId)) return true;
-  // Check if the channel's parent category matches the Districts category
+  
+  // For threads: check if thread parent channel is allowed
+  if (threadParentId && xpAllowedChannelIds.includes(threadParentId)) return true;
+  
+  // For threads: check if thread parent channel's category is allowed
+  if (threadParentCategoryId && xpAllowedChannelIds.includes(threadParentCategoryId)) return true;
+  
+  // Additional check: fetch channel from cache to get parent category info
   if (ch?.guild?.channels?.cache) {
     const channel = ch.guild.channels.cache.get(channelId);
     if (channel?.parentId && xpAllowedChannelIds.includes(channel.parentId)) return true;
+    
+    // For threads: check parent channel's category via cache
+    if (threadParentId) {
+      const parentChannel = ch.guild.channels.cache.get(threadParentId);
+      if (parentChannel?.parentId && xpAllowedChannelIds.includes(parentChannel.parentId)) return true;
+    }
   }
+  
   return false;
 }
 
@@ -2319,14 +2344,49 @@ async function main() {
                 userId,
                 channelId,
                 amount: xpPerMessage,
+                isThread: typeof message.channel.isThread === 'function' && message.channel.isThread(),
+                channelName: message.channel.name,
+                parentChannel: message.channel.parent?.name,
               });
             } catch (e) {
               logEvent('warn', 'xp_award_failed', e?.message || String(e), {
                 userId,
                 channelId,
+                isThread: typeof message.channel.isThread === 'function' && message.channel.isThread(),
+                channelName: message.channel.name,
+                parentChannel: message.channel.parent?.name,
               });
             }
+          } else {
+            // Debug: log cooldown skip
+            logEvent('debug', 'xp_cooldown_skip', 'XP award skipped due to cooldown', {
+              userId,
+              channelId,
+              cooldownMs,
+              timeSinceLastAward: now - lastAt,
+            });
           }
+        } else {
+          // Debug: log min chars skip
+          logEvent('debug', 'xp_minchars_skip', 'XP award skipped due to minimum characters', {
+            userId,
+            channelId,
+            messageLength: String(content).trim().length,
+            minChars,
+          });
+        }
+      } else {
+        // Debug: log basic condition failures
+        if (xpEnabled && userId) {
+          logEvent('debug', 'xp_channel_skip', 'XP award skipped - channel not allowed', {
+            userId,
+            channelId,
+            isThread: typeof message.channel.isThread === 'function' && message.channel.isThread(),
+            channelName: message.channel.name,
+            parentChannel: message.channel.parent?.name,
+            parentId: message.channel.parentId,
+            xpAllowedChannelIds,
+          });
         }
       }
 
